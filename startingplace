@@ -1,0 +1,153 @@
+Replicate and modernize County Health Rankings & Roadmaps data tool, but in a way that's free, self-hosted, and sustainable using R Shiny, GitHub for versioned data/scripts, and possibly APIs or scrapers for the latest data.
+
+Step-by-step plan via ChatGPT: (starting place) 
+
+## 🔧 GOALS
+
+1. **Create a Shiny app** that:
+
+   * Lets users select a **year** and a **county**.
+   * Shows a snapshot of county-level health metrics.
+   * For the **most recent year**, pulls fresh data from the web and computes measures using scripts in your GitHub repo.
+   * For **prior years**, pulls stored, versioned data from GitHub.
+
+2. Ensure the app is **self-sustaining post-grant**:
+
+   * Hosted on a free/low-cost platform (e.g., Shinyapps.io free tier or self-hosted).
+   * Automated data updates.
+   * Easy to maintain and update.
+
+---
+
+## 🗂️ FILE & REPO STRUCTURE
+
+**GitHub Repository:**
+
+```
+county-health-dashboard/
+│
+├── data/
+│   ├── 2025/
+│   ├── 2024/
+│   ├── 2023/
+│   └── ...
+│
+├── scripts/
+│   ├── get_latest_data.R      # Scrapes/pulls latest data
+│   ├── calculate_metrics.R    # Applies metric calculations
+│   └── utils.R
+│
+├── app/
+│   ├── app.R                  # Shiny app main file
+│   ├── ui.R
+│   └── server.R
+│
+├── README.md
+└── .gitignore
+```
+
+---
+
+## 🖥️ SHINY APP FUNCTIONALITY
+
+### UI
+
+* Dropdown to **select year** (e.g., 2023, 2024, "Latest").
+* Dropdown to **select county**.
+* Display:
+
+  * Snapshot cards (e.g., health outcomes, behaviors, clinical care).
+  * Visualizations (e.g., bar charts, trend lines).
+  * Contextual explanations.
+
+### Server
+
+* If `"Latest"` is selected:
+
+  * Run `get_latest_data.R` to download fresh data.
+  * Run `calculate_metrics.R` to process it.
+* If prior year selected:
+
+  * Load pre-processed `.csv` or `.rds` from `/data/<year>/`.
+* Display data accordingly.
+
+---
+
+## ⚙️ AUTOMATION STRATEGY
+
+### 🔄 "Latest" Workflow
+
+1. **On-demand** (when “Latest” is selected), run:
+
+   * `get_latest_data.R`: Fetches fresh data from source websites/APIs.
+   * `calculate_metrics.R`: Applies formulas and calculations.
+2. Store data temporarily in memory (no need to write unless caching).
+
+### 🕒 Scheduled GitHub Actions (Optional)
+
+* Set up GitHub Actions to:
+
+  * Run `get_latest_data.R` weekly/monthly.
+  * Commit the resulting files into `data/<year>/`.
+  * Helps with reproducibility and avoids repeated scraping.
+
+---
+
+## 🌐 DATA SOURCES
+
+Use APIs or scraping scripts for:
+
+* CDC WONDER
+* BRFSS
+* Census Bureau
+* CMS (Medicare)
+* HRSA
+* Others used by CHR\&R
+
+You should clearly **document each source** in your GitHub repo, ideally in a `data_sources.md`.
+
+---
+
+## 💰 COST & SUSTAINABILITY
+
+### Low/No Cost Options:
+
+* **Shinyapps.io (free tier):** Limited hours/month; works for low-traffic dashboards.
+* **Self-host on RStudio Server / Posit Open Source Server:** Can host internally if you have IT support.
+* **Docker-based hosting** on cloud VMs (optional, more technical).
+
+---
+
+## 📌 MVP CHECKLIST
+
+| Feature                             | Status       |
+| ----------------------------------- | ------------ |
+| Shiny app skeleton                  | ☐            |
+| Dropdown UI: year + county          | ☐            |
+| Load historical data from GitHub    | ☐            |
+| Automate latest data collection     | ☐            |
+| Metric calculation scripts          | ☐            |
+| Snapshot visualizations             | ☐            |
+| Hosting platform decided            | ☐            |
+| GitHub Action for scheduled updates | ☐ (optional) |
+
+---
+
+## ✅ NEXT STEPS
+
+1. ✅ Audit all metrics you need (health factors, outcomes, etc.)
+2. ✅ List all data sources needed and their format (API/scrape/download).
+3. ✅ Organize historical data into GitHub folder by year.
+4. ✅ Build Shiny UI (dropdowns + basic layout).
+5. ✅ Connect server logic to load historical data.
+6. ✅ Build web-scraper + metric calculator script for “latest” data.
+7. ✅ Test & deploy a prototype.
+8. ✅ Write documentation (README, instructions for future maintainers).
+
+---
+
+## 🚀 BONUS (for long-term sustainability)
+
+* Add download button to export snapshot (PDF, CSV).
+* Enable map-based county selection.
+* Add tooltips or glossary of health indicators.
