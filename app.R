@@ -3,7 +3,8 @@
 # - Load relational county-health data files from a GitHub repo (by year)
 # - Let user pick a Year and County
 # - Join category, factor, focus area, and measure tables
-# - Show a snapshot table and a simple bar chart for selected county
+# - Show a snapshot table 
+# - Provide users with the option to download the data as a csv 
 # - Include a placeholder "Latest" option that currently points to the newest year in the repo
 
 suppressPackageStartupMessages({
@@ -16,9 +17,10 @@ suppressPackageStartupMessages({
   library(stringr)
   library(ggplot2)
   library(memoise)
+  library(gt) 
 })
 
-# ---- Repo Config (EDIT THESE) ----
+# ---- Repo Config ----
 GITHUB_OWNER  <- Sys.getenv("CHD_GITHUB_OWNER",  unset = "County-Health-Rankings-and-Roadmaps")
 GITHUB_REPO   <- Sys.getenv("CHD_GITHUB_REPO",   unset = "chrr_measure_calcs")
 GITHUB_BRANCH <- Sys.getenv("CHD_GITHUB_BRANCH", unset = "main")
@@ -42,6 +44,20 @@ api_headers <- function() {
   h
 }
 
+# helper to build GitHub raw URL
+read_csv_github <- function(path) {
+  url <- raw_url(path)
+  readr::read_csv(url, show_col_types = FALSE, progress = FALSE)
+}
+
+
+
+# load the names datasets that are not year, county, or measure specific (ie these are always loaded) 
+
+cat_names <- read_csv_github(file.path("relational_data/t_category.csv"))
+fac_names <- read_csv_github(file.path("relational_data/t_factor.csv"))
+foc_names <- read_csv_github(file.path("relational_data/t_focus_area.csv"))
+mea_names <- read_csv_github(file.path("relational_data/t_measure_years.csv"))
 
 #define default years so something shows before api call 
 available_years <- reactiveVal(c("2023", "2022"))
@@ -65,38 +81,6 @@ list_year_dirs <- memoise(function() {
   years
 })
 
-# ---- Load Relational Data ----
-read_year_data <- memoise(function(year) {
-  base <- file.path(DATA_DIR, year)
-  files <- c(
-    category = file.path(base, "t_category_data.csv"),
-    factor   = file.path(base, "t_factor_data.csv"),
-    focus    = file.path(base, "t_focus_area_data.csv"),
-    measure  = file.path(base, "t_measure_data.csv")
-  )
-  
-  read_csv_github <- function(path) {
-    url <- raw_url(path)
-    readr::read_csv(url, show_col_types = FALSE, progress = FALSE)
-  }
-  
-  cat_df <- read_csv_github(files["category"])
-  fac_df <- read_csv_github(files["factor"])
-  foc_df <- read_csv_github(files["focus"])
-  mea_df <- read_csv_github(files["measure"])
-  
-  joined <- mea_df %>%
-    left_join(fac_df,  by = "factor_id") %>%
-    left_join(foc_df,  by = "focus_area_id") %>%
-    left_join(cat_df,  by = "category_id")
-  
-  joined %>%
-    select(
-      county_fips, county_name, state,
-      category_name, focus_area_name, factor_name,
-      measure_id, measure_name, value
-    )
-})
 
 available_years <- shiny::reactiveVal(NULL)
 
@@ -145,9 +129,8 @@ ui <- fluidPage(
         tabPanel("Snapshot",
                  br(),
                  uiOutput("note_latest"),
-                 tableOutput("summary_table"),
-                 br(),
-                 plotOutput("bar_chart")
+                 gt::gt_output("snapshot")
+                 
         ),
         tabPanel("Data",
                  br(),
@@ -210,52 +193,106 @@ server <- function(input, output, session) {
   
   year_data <- reactive({
     y <- resolved_year(); req(y)
-    tryCatch(read_year_data(y), error = function(e) {
-      validate(need(FALSE, paste("Failed to load data:", conditionMessage(e))))
-      NULL
-    })
+    
+    mea_df <- read_csv_github(file.path(paste0("relational_data/", y, "/t_measure_data_", y, ".csv"))) 
+    
+   
+    mea_df %>%
+        select(
+        county_fips, state_fips, measure_id, 
+        raw_value, ci_low, ci_high
+      )
   })
   
 
   output$note_latest <- renderUI({
     if (identical(input$year, "Latest")) {
-      HTML(sprintf("<em>Showing data from most recent available year: <b>%s</b>.</em>", resolved_year()))
+      HTML(sprintf("<em>Showing data from most recent release year: <b>%s</b>.</em>", resolved_year()))
     }
   })
   
   county_df <- reactive({
-    df <- year_data(); req(df, input$county)
-    df %>% filter(county_name == input$county)
+    req(input$state, input$county)
+    
+    # find the fips codes for the chosen state + county
+    chosen <- county_choices %>%
+      filter(state == input$state & fipscode == input$county) #note that the input county is the fipscode 
+    
+    #validate(
+    #  need(nrow(chosen) == 1, 
+    #       if (nrow(chosen) == 0) "No county found for that selection." 
+    #       else "Multiple counties found with same FIPS code.")
+    #)
+    
+    state_fips <- chosen$statecode
+    county_fips <- chosen$countycode
+    
+    df <- year_data(); req(df)
+    
+    # filter measure data by fips
+    df %>%
+      filter(state_fips == !!state_fips, county_fips == !!county_fips)
   })
   
-  output$summary_table <- renderTable({
-    cdf <- county_df(); req(nrow(cdf) > 0)
-    cdf %>% arrange(category_name, focus_area_name, measure_name) %>%
-      select(category_name, focus_area_name, measure_name, value) %>% head(15)
-  }, striped = TRUE, bordered = TRUE, hover = TRUE, width = "100%")
-  
-  output$bar_chart <- renderPlot({
-    cdf <- county_df(); req(nrow(cdf) > 0)
-    top_measures <- cdf %>% arrange(desc(abs(suppressWarnings(as.numeric(value))))) %>% slice_head(n = 8)
-    ggplot(top_measures, aes(x = reorder(measure_name, suppressWarnings(as.numeric(value))), y = suppressWarnings(as.numeric(value)))) +
-      geom_col() +
-      coord_flip() +
-      labs(x = NULL, y = "Value",
-           title = paste0("Top measures for ", input$county, " (", resolved_year(), ")"))
-  })
-  
-  output$raw_table <- renderDataTable({
-    year_data()
-  })
-  
-  snapshot_data <- reactive({
+ snapshot_data <- reactive({
+    req(input$county, input$year)
     year <- input$year
-    data_list <- read_year_data(year)
-    snapshot <- build_snapshot(data_list)
-    snapshot
+    base <- file.path("relational_data", year)
+    
+    
+    # Build the full mapping chain -----------------------------------
+    measure_map <- mea_names %>%
+      # connect measure_id -> focus area
+      left_join(foc_names, by = c("measure_parent" = "focus_area_id", "year")) %>%
+      # connect focus area -> factor
+      left_join(fac_names, by = c("focus_area_parent" = "factor_id", "year")) %>%
+      # connect factor -> category
+      left_join(cat_names, by = c("factor_parent" = "category_id", "year")) %>%
+      select(
+        measure_id,
+        measure_name,
+        years_used,
+        factor_name,
+        category_name
+      )
+    
+    
+    
+    
+    # Attach measure values ------------------------------------------
+    measure_values <- county_df() %>%
+      left_join(measure_map, by = "measure_id") %>%
+      mutate(
+        measure_display = paste0(measure_name, " (", years_used, ")"),
+        value_ci = paste0(raw_value, " [", ci_low, ", ", ci_high, "]")
+      )
+    
+    # Build a clean table --------------------------------------------
+    final_table <- measure_values %>%
+      select(category_name, factor_name, measure_display, value_ci) %>%
+      arrange(category_name, factor_name, measure_display)
+    
+    # Pretty table with headers --------------------------------------
+    final_table %>%
+      gt::gt(rowname_col = "measure_display") %>%
+      gt::tab_spanner(
+        label = "Category",
+        columns = "category_name"
+      ) %>%
+      gt::tab_spanner(
+        label = "Factor",
+        columns = "factor_name"
+      ) %>%
+      gt::cols_label(
+        category_name = "Category",
+        factor_name = "Factor",
+        value_ci = "Value (95% CI)"
+      )
+    
+    
   })
   
-  output$snapshot <- DT::renderDataTable({
+  output$snapshot <- gt::render_gt({
     snapshot_data()
   })
   
