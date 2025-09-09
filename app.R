@@ -125,18 +125,15 @@ ui <- fluidPage(
                code(sprintf("%s/%s@%s/%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR)))
     ),
     mainPanel(
-      tabsetPanel(
-        tabPanel("Snapshot",
+      
                  br(),
                  uiOutput("note_latest"),
+                 downloadButton("download_data", "Download these data as a csv"),
                  gt::gt_output("snapshot")
                  
-        ),
-        tabPanel("Data",
-                 br(),
-                 dataTableOutput("raw_table")
-        )
-      )
+        
+        
+      
     )
   )
 )
@@ -182,6 +179,22 @@ server <- function(input, output, session) {
                 selected = counties_in_state$fipscode[1])
   })
   
+  output$download_data <- downloadHandler(
+    filename = function() {
+      paste0(
+        input$state, "_",
+        input$county, "_",
+        input$year,
+        ".csv"
+      )
+    },
+    content = function(file) {
+      write.csv(measure_values, file, row.names = FALSE)
+    }
+  )
+  
+  
+  
   resolved_year <- reactive({
     if (identical(input$year, "Latest")) {
       yrs <- available_years(); req(yrs)
@@ -218,84 +231,85 @@ server <- function(input, output, session) {
     chosen <- county_choices %>%
       filter(state == input$state & fipscode == input$county) #note that the input county is the fipscode 
     
-    #validate(
-    #  need(nrow(chosen) == 1, 
-    #       if (nrow(chosen) == 0) "No county found for that selection." 
-    #       else "Multiple counties found with same FIPS code.")
-    #)
+    #for quick n dirty testing 
+    #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
     
     state_fips <- chosen$statecode
     county_fips <- chosen$countycode
     
     df <- year_data(); req(df)
     
+   
+    
     # filter measure data by fips
     df %>%
       filter(state_fips == !!state_fips, county_fips == !!county_fips)
+    
+    # for quick n dirty testing 
+    #county_df = mea_df %>% filter(state_fips == !!state_fips, county_fips == !!county_fips)
   })
   
- snapshot_data <- reactive({
+  # Reactive: raw measure values for the selected county/year
+  measure_values_data <- reactive({
     req(input$county, input$year)
-    year <- input$year
-    base <- file.path("relational_data", year)
     
-    
-    # Build the full mapping chain -----------------------------------
+    # Build the measure mapping
     measure_map <- mea_names %>%
-      # connect measure_id -> focus area
       left_join(foc_names, by = c("measure_parent" = "focus_area_id", "year")) %>%
-      # connect focus area -> factor
       left_join(fac_names, by = c("focus_area_parent" = "factor_id", "year")) %>%
-      # connect factor -> category
       left_join(cat_names, by = c("factor_parent" = "category_id", "year")) %>%
-      select(
-        measure_id,
-        measure_name,
-        years_used,
-        factor_name,
-        category_name
-      )
+      select(measure_id, measure_name, years_used, factor_name, category_name)
     
-    
-    
-    
-    # Attach measure values ------------------------------------------
+    # Join county data and map
     measure_values <- county_df() %>%
       left_join(measure_map, by = "measure_id") %>%
       mutate(
         measure_display = paste0(measure_name, " (", years_used, ")"),
-        value_ci = paste0(raw_value, " [", ci_low, ", ", ci_high, "]")
+        value_ci = dplyr::case_when(
+          is.na(ci_low) | is.na(ci_high) ~ as.character(round(raw_value, 3)),
+          TRUE ~ paste0(round(raw_value, 3), " (", round(ci_low, 3), ", ", round(ci_high, 3), ")")
+        )
       )
     
-    # Build a clean table --------------------------------------------
-    final_table <- measure_values %>%
+    measure_values
+  })
+  
+  # Reactive: formatted gt table for display
+  snapshot_data <- reactive({
+    final_table <- measure_values_data() %>%
       select(category_name, factor_name, measure_display, value_ci) %>%
       arrange(category_name, factor_name, measure_display)
     
-    # Pretty table with headers --------------------------------------
     final_table %>%
       gt::gt(rowname_col = "measure_display") %>%
-      gt::tab_spanner(
-        label = "Category",
-        columns = "category_name"
-      ) %>%
-      gt::tab_spanner(
-        label = "Factor",
-        columns = "factor_name"
-      ) %>%
+      gt::tab_spanner(label = "Category", columns = "category_name") %>%
+      gt::tab_spanner(label = "Factor", columns = "factor_name") %>%
       gt::cols_label(
         category_name = "Category",
         factor_name = "Factor",
         value_ci = "Value (95% CI)"
       )
-    
-    
   })
   
+  # Render the table
   output$snapshot <- gt::render_gt({
     snapshot_data()
   })
   
+  # Download handler for CSV
+  output$download_data <- downloadHandler(
+    filename = function() {
+      paste0(
+        gsub(" ", "_", input$state), "_",
+        gsub(" ", "_", input$county), "_",
+        input$year,
+        ".csv"
+      )
+    },
+    content = function(file) {
+      write.csv(measure_values_data(), file, row.names = FALSE)
+    }
+  )
 }
 
 shinyApp(ui, server)
