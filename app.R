@@ -160,17 +160,10 @@ server <- function(input, output, session) {
   
   output$year_ui <- renderUI({
     yrs <- available_years()
-    
-    req(length(yrs) > 0)
-    
-    # Make sure they're sorted numerically (descending, newest first)
-    yrs_num <- sort(as.numeric(yrs), decreasing = TRUE)
-    # Remove the maximum year (will be represented by "Latest")
-    yrs_no_latest <- yrs_num[yrs_num != max(yrs_num)]
     selectInput(
       "year",
       "Release year",
-      choices = c("Latest" = "Latest", setNames(yrs_no_latest, yrs_no_latest)),
+      choices = c("Latest" = "Latest", setNames(yrs, yrs)),
       selected = "Latest"
     )
   })
@@ -181,15 +174,9 @@ server <- function(input, output, session) {
     counties_in_state <- county_choices %>%
       filter(state == input$state)
     
-    if (nrow(counties_in_state) == 0) {
-      return(selectInput("county", "Select County:", choices = "Select a state first"))
-    }
-    
     selectInput("county", "Select County:",
-                #choices = setNames(counties_in_state$fipscode, counties_in_state$county),
-                choices = counties_in_state$county, 
-                #selected = counties_in_state$fipscode[1])
-                selected = counties_in_state$county[1])
+                choices = setNames(counties_in_state$fipscode, counties_in_state$county),
+                selected = counties_in_state$fipscode[1])
   })
   
   output$download_data <- downloadHandler(
@@ -242,7 +229,7 @@ server <- function(input, output, session) {
     
     # find the fips codes for the chosen state + county
     chosen <- county_choices %>%
-      filter(state == input$state & county == input$county) #note that the input county is the county name 
+      filter(state == input$state & fipscode == input$county) #note that the input county is the fipscode 
     
     #for quick n dirty testing 
     #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
@@ -262,112 +249,35 @@ server <- function(input, output, session) {
     #county_df = mea_df %>% filter(state_fips == !!state_fips, county_fips == !!county_fips)
   })
   
-  state_df <- reactive({
-    req(input$state)
-    
-    # find the fips codes for the chosen state + county
-    chosen <- county_choices %>%
-      filter(state == input$state & county == input$county) #note that the input county is the county name
-    
-    #for quick n dirty testing 
-    #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
-    
-    state_fips <- chosen$statecode
-    county_fips <- "000"
-    
-    df <- year_data(); req(df)
-    
-    
-    
-    # filter measure data by fips
-    df %>%
-      filter(state_fips == !!state_fips) %>% 
-      group_by(measure_id, state_fips) %>% 
-      summarize(stateval = median(raw_value, na.rm = TRUE))
-    
-    # for quick n dirty testing 
-    #state_df = mea_df %>% filter(state_fips == !!state_fips) %>% group_by(measure_id, state_fips) %>% summarize(stateval = median(raw_value, na.rm = TRUE))
-  })
-  
-  
   # Reactive: raw measure values for the selected county/year
   measure_values_data <- reactive({
     req(input$county, input$year)
-    y <- resolved_year(); req(y) 
     
     # Build the measure mapping
     measure_map <- mea_names %>%
-      filter(year == y) %>% 
       left_join(foc_names, by = c("measure_parent" = "focus_area_id", "year")) %>%
       left_join(fac_names, by = c("focus_area_parent" = "factor_id", "year")) %>%
       left_join(cat_names, by = c("factor_parent" = "category_id", "year")) %>%
-      select(measure_id, measure_name, years_used, factor_name, category_name, display_precision, format_type)
+      select(measure_id, measure_name, years_used, factor_name, category_name)
     
     # Join county data and map
     measure_values <- county_df() %>%
-     #measure_values = county_df %>% 
-      left_join(state_df(), by = "measure_id") %>% 
       left_join(measure_map, by = "measure_id") %>%
       mutate(
         measure_display = paste0(measure_name, " (", years_used, ")"),
-        value_ci = case_when(
-          # Case: missing CI
-          is.na(ci_low) | is.na(ci_high) ~ as.character(
-            case_when(
-              format_type == 0 ~ scales::number(raw_value, accuracy = 1 / (10^display_precision)), # rate
-              format_type == 1 ~ scales::percent(raw_value, accuracy = 1 / (10^display_precision)), # percentage
-              format_type == 2 ~ scales::dollar(raw_value, accuracy = 1 / (10^display_precision)),  # dollars
-              format_type == 3 ~ scales::number(raw_value, accuracy = 1 / (10^display_precision))   # ratio
-            )
-          ),
-          # Case: with CI
-          TRUE ~ case_when(
-            format_type == 0 ~ paste0(
-              scales::number(raw_value, accuracy = 1 / (10^display_precision)), " (",
-              scales::number(ci_low, accuracy = 1 / (10^display_precision)), ", ",
-              scales::number(ci_high, accuracy = 1 / (10^display_precision)), ")"
-            ),
-            format_type == 1 ~ paste0(
-              scales::percent(raw_value, accuracy = 1 / (10^display_precision)), " (",
-              scales::percent(ci_low, accuracy = 1 / (10^display_precision)), ", ",
-              scales::percent(ci_high, accuracy = 1 / (10^display_precision)), ")"
-            ),
-            format_type == 2 ~ paste0(
-              scales::dollar(raw_value, accuracy = 1 / (10^display_precision)), " (",
-              scales::dollar(ci_low, accuracy = 1 / (10^display_precision)), ", ",
-              scales::dollar(ci_high, accuracy = 1 / (10^display_precision)), ")"
-            ),
-            format_type == 3 ~ paste0(
-              scales::number(raw_value, accuracy = 1 / (10^display_precision)), " (",
-              scales::number(ci_low, accuracy = 1 / (10^display_precision)), ", ",
-              scales::number(ci_high, accuracy = 1 / (10^display_precision)), ")"
-            )
-          )
-        ),
-        # Format state values (no CI)
-        stateval_fmt = case_when(
-          format_type == 0 ~ scales::number(stateval, accuracy = 1 / (10^display_precision), big.mark = ","), 
-          format_type == 1 ~ scales::percent(stateval, accuracy = 1 / (10^display_precision)), 
-          format_type == 2 ~ scales::dollar(stateval, accuracy = 1 / (10^display_precision)),  
-          format_type == 3 ~ scales::number(stateval, accuracy = 1 / (10^display_precision), big.mark = ",")   
+        value_ci = dplyr::case_when(
+          is.na(ci_low) | is.na(ci_high) ~ as.character(round(raw_value, 3)),
+          TRUE ~ paste0(round(raw_value, 3), " (", round(ci_low, 3), ", ", round(ci_high, 3), ")")
         )
       )
+    
     measure_values
   })
   
-  
-  
-  
   # Reactive: formatted gt table for display
   snapshot_data <- reactive({
-    #quick n dirty 
-    #final_table = measure_values %>% left_join(state_df, by = c("measure_id", "state_fips")) %>% 
-    #  select(category_name, factor_name, measure_display, value_ci, stateval) %>%
-    #  arrange(category_name, factor_name, measure_display)
-    
     final_table <- measure_values_data() %>%
-      #left_join(state_df(), by = c("measure_id", "state_fips")) %>% 
-      select(category_name, factor_name, measure_display, value_ci, stateval_fmt) %>%
+      select(category_name, factor_name, measure_display, value_ci) %>%
       arrange(category_name, factor_name, measure_display)
     
     final_table %>%
@@ -377,8 +287,7 @@ server <- function(input, output, session) {
       gt::cols_label(
         category_name = "Category",
         factor_name = "Factor",
-        value_ci = paste0(input$county, " (95% CI)"),
-        stateval_fmt = input$state
+        value_ci = "Value (95% CI)"
       )
   })
   
@@ -393,7 +302,7 @@ server <- function(input, output, session) {
       paste0(
         gsub(" ", "_", input$state), "_",
         gsub(" ", "_", input$county), "_",
-        resolved_year(),
+        input$year,
         ".csv"
       )
     },
