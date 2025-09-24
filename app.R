@@ -57,7 +57,15 @@ read_csv_github <- function(path) {
 cat_names <- read_csv_github(file.path("relational_data/t_category.csv"))
 fac_names <- read_csv_github(file.path("relational_data/t_factor.csv"))
 foc_names <- read_csv_github(file.path("relational_data/t_focus_area.csv"))
-mea_names <- read_csv_github(file.path("relational_data/t_measure_years.csv"))
+mea_years <- read_csv_github(file.path("relational_data/t_measure_years.csv")) %>% select(year, measure_id, years_used)
+mea_compare <- read_csv_github(file.path("relational_data/t_measure.csv"))
+# this has JRs comparable codes: compare_states and compare_years
+# where -1 = unknown, 0 = no, 1 = yes, and 2= with caution 
+
+
+mea_names = mea_years %>%
+  full_join(mea_compare, by = c("measure_id", "year")) 
+
 
 #define default years so something shows before api call 
 available_years <- reactiveVal(c("2023", "2022"))
@@ -121,14 +129,27 @@ ui <- fluidPage(
       uiOutput("year_ui"), 
       
       tags$hr(),
-      helpText("Data loaded live from GitHub repo: ",
-               code(sprintf("%s/%s@%s/%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR)))
-    ),
+      helpText(
+        "Data loaded from: ",
+        a(
+          sprintf("%s/%s@%s/%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR),
+          href = sprintf("https://github.com/%s/%s/tree/%s/%s",
+                         GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR)
+          #, target = "_blank"
+        )
+      )), 
     mainPanel(
       
                  br(),
                  uiOutput("note_latest"),
                  downloadButton("download_data", "Download these data as a csv"),
+                 helpText(
+                   HTML("
+    <b>Legend:</b> 
+    ✓ = Comparable with prior years | 
+    ✗ = Not comparable with prior years | 
+    ⚠ = Use caution when comparing with prior years
+  ")), 
                  gt::gt_output("snapshot")
                  
         
@@ -301,7 +322,7 @@ server <- function(input, output, session) {
       left_join(foc_names, by = c("measure_parent" = "focus_area_id", "year")) %>%
       left_join(fac_names, by = c("focus_area_parent" = "factor_id", "year")) %>%
       left_join(cat_names, by = c("factor_parent" = "category_id", "year")) %>%
-      select(measure_id, measure_name, years_used, factor_name, category_name, display_precision, format_type)
+      select(measure_id, measure_name, years_used, factor_name, category_name, display_precision, format_type, compare_states, compare_years)
     
     # Join county data and map
     measure_values <- county_df() %>%
@@ -366,14 +387,37 @@ server <- function(input, output, session) {
     #  arrange(category_name, factor_name, measure_display)
     
     final_table <- measure_values_data() %>%
-      #left_join(state_df(), by = c("measure_id", "state_fips")) %>% 
-      select(category_name, factor_name, measure_display, value_ci, stateval_fmt) %>%
-      arrange(category_name, factor_name, measure_display)
+      # Add state comparison symbols next to the measure name
+      mutate(
+        measure_display_fmt = paste0(
+          measure_display,
+          " ",
+          case_when(
+            compare_years == -1 ~ "?",
+            compare_years == 0  ~ "✗",
+            compare_years == 1  ~ "✓",
+            compare_years == 2  ~ "⚠",
+            TRUE ~ ""
+          )
+        ),
+        # Add text guidance for year comparison
+        state_comparison_note = case_when(
+          compare_states == -1 ~ "Use caution if comparing these data across states",
+          compare_states == 0  ~ "These data are incomparable across states",
+          compare_states == 1  ~ "These data can be compared across states",
+          compare_states == 2  ~ "Use caution if comparing these data across states",
+          TRUE ~ ""
+        )
+      ) %>%
+      select(category_name, factor_name, value_ci, stateval_fmt,
+             measure_display_fmt, state_comparison_note) %>%
+      arrange(category_name, factor_name)
     
     final_table %>%
-      gt::gt(rowname_col = "measure_display") %>%
+      gt::gt(rowname_col = "measure_display_fmt") %>%
       gt::tab_spanner(label = "Category", columns = "category_name") %>%
       gt::tab_spanner(label = "Factor", columns = "factor_name") %>%
+      #gt::tab_spanner(label = "Comparison", columns = c("compare_states_fmt", "compare_years_fmt")) %>%
       gt::cols_label(
         category_name = "Category",
         factor_name = "Factor",
