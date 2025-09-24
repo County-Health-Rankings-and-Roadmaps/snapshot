@@ -284,7 +284,8 @@ server <- function(input, output, session) {
   })
   
   state_df <- reactive({
-    req(input$state)
+    req(input$state, input$year)
+    y <- resolved_year(); req(y) 
     
     # find the fips codes for the chosen state + county
     chosen <- county_choices %>%
@@ -296,18 +297,23 @@ server <- function(input, output, session) {
     state_fips <- chosen$statecode
     county_fips <- "000"
     
-    df <- year_data(); req(df)
+    # construct path to state data CSV for the chosen year
+   # state_file = sprintf("https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv", 2023, 2023)
     
+    state_file <- sprintf(
+      "https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv",
+      y,y)
     
+    # read state-level data for the selected year
+    df <- readr::read_csv(state_file, show_col_types = FALSE)
     
-    # filter measure data by fips
+    # filter for the chosen state
     df %>%
-      filter(state_fips == !!state_fips) %>% 
-      group_by(measure_id, state_fips) %>% 
-      summarize(stateval = median(raw_value, na.rm = TRUE))
-    
-    # for quick n dirty testing 
-    #state_df = mea_df %>% filter(state_fips == !!state_fips) %>% group_by(measure_id, state_fips) %>% summarize(stateval = median(raw_value, na.rm = TRUE))
+      dplyr::filter(state_fips == !!state_fips) %>%
+      dplyr::select(measure_id, state_fips, raw_value, ci_low,ci_high) %>% 
+      rename(stateval = raw_value, 
+             state_ci_low = ci_low, 
+             state_ci_high = ci_high)
   })
   
   
@@ -365,12 +371,38 @@ server <- function(input, output, session) {
             )
           )
         ),
-        # Format state values (no CI)
+        # State value + CI
         stateval_fmt = case_when(
-          format_type == 0 ~ scales::number(stateval, accuracy = 1 / (10^display_precision), big.mark = ","), 
-          format_type == 1 ~ scales::percent(stateval, accuracy = 1 / (10^display_precision)), 
-          format_type == 2 ~ scales::dollar(stateval, accuracy = 1 / (10^display_precision)),  
-          format_type == 3 ~ scales::number(stateval, accuracy = 1 / (10^display_precision), big.mark = ",")   
+          is.na(state_ci_low) | is.na(state_ci_high) ~ as.character(
+            case_when(
+              format_type == 0 ~ scales::number(stateval, accuracy = 1 / (10^display_precision), big.mark = ","),
+              format_type == 1 ~ scales::percent(stateval, accuracy = 1 / (10^display_precision)),
+              format_type == 2 ~ scales::dollar(stateval, accuracy = 1 / (10^display_precision)),
+              format_type == 3 ~ scales::number(stateval, accuracy = 1 / (10^display_precision), big.mark = ",")
+            )
+          ),
+          TRUE ~ case_when(
+            format_type == 0 ~ paste0(
+              scales::number(stateval, accuracy = 1 / (10^display_precision), big.mark = ","), " (",
+              scales::number(state_ci_low, accuracy = 1 / (10^display_precision)), ", ",
+              scales::number(state_ci_high, accuracy = 1 / (10^display_precision)), ")"
+            ),
+            format_type == 1 ~ paste0(
+              scales::percent(stateval, accuracy = 1 / (10^display_precision)), " (",
+              scales::percent(state_ci_low, accuracy = 1 / (10^display_precision)), ", ",
+              scales::percent(state_ci_high, accuracy = 1 / (10^display_precision)), ")"
+            ),
+            format_type == 2 ~ paste0(
+              scales::dollar(stateval, accuracy = 1 / (10^display_precision)), " (",
+              scales::dollar(state_ci_low, accuracy = 1 / (10^display_precision)), ", ",
+              scales::dollar(state_ci_high, accuracy = 1 / (10^display_precision)), ")"
+            ),
+            format_type == 3 ~ paste0(
+              scales::number(stateval, accuracy = 1 / (10^display_precision), big.mark = ","), " (",
+              scales::number(state_ci_low, accuracy = 1 / (10^display_precision)), ", ",
+              scales::number(state_ci_high, accuracy = 1 / (10^display_precision)), ")"
+            )
+          )
         )
       )
     measure_values
