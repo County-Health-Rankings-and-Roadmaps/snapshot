@@ -150,15 +150,22 @@ ui <- fluidPage(
     ✗ = Not comparable with prior years | 
     ⚠ = Use caution when comparing with prior years
   ")), 
-                 gt::gt_output("snapshot")
+                 uiOutput("accordion_ui"),
                  
-        
-        
-      
+                 # JS handler for toggling details
+                 tags$script(HTML("
+        Shiny.addCustomMessageHandler('toggleDetails', function(id) {
+          let details = document.querySelectorAll('#' + id + ' details');
+          if (details.length > 0) {
+            let shouldOpen = !details[0].open;
+            details.forEach(d => d.open = shouldOpen);
+          }
+        });
+      "))
     )
   )
 )
-
+        
 
 
 
@@ -178,6 +185,17 @@ server <- function(input, output, session) {
     }
     available_years(yrs)
   })
+  
+  observe({
+    lapply(unique(measure_values_data()$category_name), function(cat) {
+      btn_id <- paste0("toggle_", gsub(" ", "_", cat))
+      panel_id <- paste0("category-accordion-", gsub(" ", "_", cat))
+      observeEvent(input[[btn_id]], {
+        session$sendCustomMessage("toggleAccordion", panel_id)
+      })
+    })
+  })
+  
   
   output$year_ui <- renderUI({
     yrs <- available_years()
@@ -524,6 +542,40 @@ server <- function(input, output, session) {
   output$snapshot <- gt::render_gt({
     snapshot_data()
   })
+  
+  
+  
+  
+  
+  
+      
+        # In UI
+        tags$script(HTML("
+  Shiny.addCustomMessageHandler('toggleAccordion', function(categoryId) {
+    let panel = document.getElementById(categoryId);
+    if (panel) {
+      let collapse = panel.querySelector('.accordion-collapse');
+      if (collapse) {
+        let bsCollapse = bootstrap.Collapse.getInstance(collapse) || new bootstrap.Collapse(collapse);
+        bsCollapse.toggle();
+      }
+    }
+  });
+"))
+        
+  
+  # ---- optional JS handler for "Expand/Collapse All" ----
+  tags$script(HTML("
+  Shiny.addCustomMessageHandler('toggleDetails', function(id) {
+    let details = document.querySelectorAll('#' + id + ' details');
+    if (details.length > 0) {
+      let shouldOpen = !details[0].open;
+      details.forEach(d => d.open = shouldOpen);
+    }
+  });
+"))
+  
+  
   
   # Download handler for CSV
   output$download_data <- downloadHandler(
