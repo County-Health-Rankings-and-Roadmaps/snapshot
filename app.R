@@ -316,6 +316,30 @@ server <- function(input, output, session) {
              state_ci_high = ci_high)
   })
   
+  ntl_df <- reactive({
+    req(input$year)
+    y <- resolved_year(); req(y) 
+    
+    # construct path to state data CSV for the chosen year
+    # state_file = sprintf("https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv", 2023, 2023)
+    
+    state_file <- sprintf(
+      "https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv",
+      y,y)
+    
+    # read state-level data for the selected year
+    df <- readr::read_csv(state_file, show_col_types = FALSE)
+    
+    # filter for the chosen state
+    df %>%
+      dplyr::filter(state_fips == "00") %>%
+      dplyr::select(measure_id, state_fips, raw_value, ci_low,ci_high) %>% 
+      rename(ntlval = raw_value, 
+             ntl_ci_low = ci_low, 
+             ntl_ci_high = ci_high)
+  })
+  
+  
   
   # Reactive: raw measure values for the selected county/year
   measure_values_data <- reactive({
@@ -328,12 +352,13 @@ server <- function(input, output, session) {
       left_join(foc_names, by = c("measure_parent" = "focus_area_id", "year")) %>%
       left_join(fac_names, by = c("focus_area_parent" = "factor_id", "year")) %>%
       left_join(cat_names, by = c("factor_parent" = "category_id", "year")) %>%
-      select(measure_id, measure_name, years_used, factor_name, category_name, display_precision, format_type, compare_states, compare_years)
+      select(measure_id, measure_name, years_used, factor_name, category_name, display_precision, format_type, compare_states, compare_years, description)
     
     # Join county data and map
     measure_values <- county_df() %>%
      #measure_values = county_df %>% 
       left_join(state_df(), by = "measure_id") %>% 
+      left_join(ntl_df(), by = "measure_id") %>% 
       left_join(measure_map, by = "measure_id") %>%
       mutate(
         measure_display = paste0(measure_name, " (", years_used, ")"),
@@ -403,6 +428,40 @@ server <- function(input, output, session) {
               scales::number(state_ci_high, accuracy = 1 / (10^display_precision)), ")"
             )
           )
+        ),
+        
+        # State value + CI
+        ntlval_fmt = case_when(
+          is.na(ntl_ci_low) | is.na(ntl_ci_high) ~ as.character(
+            case_when(
+              format_type == 0 ~ scales::number(ntlval, accuracy = 1 / (10^display_precision), big.mark = ","),
+              format_type == 1 ~ scales::percent(ntlval, accuracy = 1 / (10^display_precision)),
+              format_type == 2 ~ scales::dollar(ntlval, accuracy = 1 / (10^display_precision)),
+              format_type == 3 ~ scales::number(ntlval, accuracy = 1 / (10^display_precision), big.mark = ",")
+            )
+          ),
+          TRUE ~ case_when(
+            format_type == 0 ~ paste0(
+              scales::number(ntlval, accuracy = 1 / (10^display_precision), big.mark = ","), " (",
+              scales::number(ntl_ci_low, accuracy = 1 / (10^display_precision)), ", ",
+              scales::number(ntl_ci_high, accuracy = 1 / (10^display_precision)), ")"
+            ),
+            format_type == 1 ~ paste0(
+              scales::percent(ntlval, accuracy = 1 / (10^display_precision)), " (",
+              scales::percent(ntl_ci_low, accuracy = 1 / (10^display_precision)), ", ",
+              scales::percent(ntl_ci_high, accuracy = 1 / (10^display_precision)), ")"
+            ),
+            format_type == 2 ~ paste0(
+              scales::dollar(ntlval, accuracy = 1 / (10^display_precision)), " (",
+              scales::dollar(ntl_ci_low, accuracy = 1 / (10^display_precision)), ", ",
+              scales::dollar(ntl_ci_high, accuracy = 1 / (10^display_precision)), ")"
+            ),
+            format_type == 3 ~ paste0(
+              scales::number(ntlval, accuracy = 1 / (10^display_precision), big.mark = ","), " (",
+              scales::number(ntl_ci_low, accuracy = 1 / (10^display_precision)), ", ",
+              scales::number(ntl_ci_high, accuracy = 1 / (10^display_precision)), ")"
+            )
+          )
         )
       )
     measure_values
@@ -441,8 +500,8 @@ server <- function(input, output, session) {
           TRUE ~ ""
         )
       ) %>%
-      select(category_name, factor_name, value_ci, stateval_fmt,
-             measure_display_fmt, state_comparison_note) %>%
+      select(description, state_comparison_note,category_name, factor_name, value_ci, stateval_fmt, ntlval_fmt, 
+             measure_display_fmt) %>%
       arrange(category_name, factor_name)
     
     final_table %>%
@@ -454,7 +513,10 @@ server <- function(input, output, session) {
         category_name = "Category",
         factor_name = "Factor",
         value_ci = paste0(input$county, " (95% CI)"),
-        stateval_fmt = input$state
+        stateval_fmt = paste0(input$state, " (95% CI)"),
+        ntlval_fmt = "United States",
+        state_comparison_note = "",
+        description = ""
       )
   })
   
