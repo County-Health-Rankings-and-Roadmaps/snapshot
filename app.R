@@ -539,12 +539,56 @@ server <- function(input, output, session) {
   })
   
   # Render the table
-  output$snapshot <- gt::render_gt({
-    snapshot_data()
+  #output$snapshot <- gt::render_gt({
+  #  snapshot_data()
+  #})
+  
+  
+  output$accordion_ui <- renderUI({
+    req(snapshot_data())
+    df <- snapshot_data()
+    categories <- unique(df$category_name)
+    
+    bslib::accordion(
+      id = "category-accordion",
+      !!!lapply(categories, function(cat) {
+        df_cat <- df %>% filter(category_name == cat)
+        factors <- unique(df_cat$factor_name)
+        
+        bslib::accordion_panel(
+          title = cat,
+          collapsed = TRUE,
+          tagList(
+            lapply(factors, function(fac) {
+              # Create a safe Shiny output ID for this factor
+              table_id <- paste0("gt_", make.names(cat), "_", make.names(fac))
+              
+              # Dynamically assign render_gt output
+              output[[table_id]] <- gt::render_gt({
+                df_cat %>%
+                  filter(factor_name == fac) %>%
+                  select(measure_display_fmt, value_ci, stateval_fmt, ntlval_fmt) %>%
+                  gt::gt() %>%
+                  gt::cols_label(
+                    measure_display_fmt = "Measure",
+                    value_ci = paste0(input$county, " (95% CI)"),
+                    stateval_fmt = paste0(input$state, " (95% CI)"),
+                    ntlval_fmt = "United States"
+                  )
+              })
+              
+              # Reference GT table in the UI
+              tagList(
+                h4(fac),
+                gt::gt_output(table_id),
+                br()
+              )
+            })
+          )
+        )
+      })
+    )
   })
-  
-  
-  
   
   
   
