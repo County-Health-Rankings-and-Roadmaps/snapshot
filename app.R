@@ -18,6 +18,8 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(memoise)
   library(gt) 
+  library(bslib)
+  library(digest)
 })
 
 # ---- Repo Config ----
@@ -150,9 +152,8 @@ ui <- fluidPage(
     ✗ = Not comparable with prior years | 
     ⚠ = Use caution when comparing with prior years
   ")), 
-                 gt::gt_output("snapshot")
+                 uiOutput("snapshot_accordion")
                  
-        
         
       
     )
@@ -265,14 +266,15 @@ server <- function(input, output, session) {
     chosen <- county_choices %>%
       filter(state == input$state & county == input$county) #note that the input county is the county name 
     
-    #for quick n dirty testing 
-    #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
+    # Defensive check
+    req(nrow(chosen) > 0)
     
-    state_fips <- chosen$statecode
-    county_fips <- chosen$countycode
+    state_fips <- chosen$statecode[1]
+    county_fips <- chosen$countycode[1]
+    req(state_fips, county_fips)
     
-    df <- year_data(); req(df)
-    
+    df <- year_data()
+    req(df)
    
     
     # filter measure data by fips
@@ -284,17 +286,21 @@ server <- function(input, output, session) {
   })
   
   state_df <- reactive({
-    req(input$state, input$year)
+    req(input$state, input$county, input$year)
     y <- resolved_year(); req(y) 
     
     # find the fips codes for the chosen state + county
     chosen <- county_choices %>%
       filter(state == input$state & county == input$county) #note that the input county is the county name
+    # Defensive check
+    req(nrow(chosen) > 0)  # ensures chosen is not empty
     
     #for quick n dirty testing 
     #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
+
     
-    state_fips <- chosen$statecode
+    state_fips <- chosen$statecode[1]
+  req(state_fips)
     county_fips <- "000"
     
     # construct path to state data CSV for the chosen year
@@ -343,8 +349,11 @@ server <- function(input, output, session) {
   
   # Reactive: raw measure values for the selected county/year
   measure_values_data <- reactive({
-    req(input$county, input$year)
+    req(input$county, input$year, input$state)
     y <- resolved_year(); req(y) 
+    
+    # Require data from upstream reactives to be ready
+    req(county_df(), state_df(), ntl_df())
     
     # Build the measure mapping
     measure_map <- mea_names %>%
@@ -520,10 +529,193 @@ server <- function(input, output, session) {
       )
   })
   
-  # Render the table
-  output$snapshot <- gt::render_gt({
-    snapshot_data()
+  output$snapshot_accordion <- renderUI({
+    df <- measure_values_data() %>%
+      mutate(
+        measure_display_fmt = paste0(
+          measure_display,
+          " ",
+          case_when(
+            compare_years == -1 ~ "?",
+            compare_years == 0  ~ "✗",
+            compare_years == 1  ~ "✓",
+            compare_years == 2  ~ "⚠",
+            TRUE ~ ""
+          )
+        )
+      )
+   
+    req(nrow(df) > 0)
+    
+    # Nest: Category -> Factor
+    category_list <- split(df, df$category_name)
+    
+    category_panels <- lapply(names(category_list), function(cat) {
+      cat_df <- category_list[[cat]]
+      
+      # Split by factor within this category
+      factor_list <- split(cat_df, cat_df$factor_name)
+      
+      
+      # Create GT outputs for each factor (so they render correctly)
+      lapply(names(factor_list), function(fac) {
+        local({
+          f <- fac
+          fac_df <- factor_list[[f]]
+          
+          output_id_ui <- paste0("gt_", digest::digest(f))
+          output_id_gt <- paste0("gt_inner_", digest::digest(f))
+          
+          # UI placeholder (nested output container)
+          output[[output_id_ui]] <- renderUI({
+            gt::gt_output(outputId = output_id_gt)
+          })
+          
+          # Render actual GT table
+          output[[output_id_gt]] <- gt::render_gt({
+            fac_df %>%
+              select(
+                measure_display = measure_display_fmt,
+                description,
+                value_ci,
+                stateval_fmt,
+                ntlval_fmt
+              ) %>%
+              arrange(measure_display) %>%
+              gt::gt() %>%
+              gt::cols_label(
+                measure_display = "Measure",
+                description = "Description",
+                value_ci = paste0(input$county, " (95% CI)"),
+                stateval_fmt = paste0(input$state, " (95% CI)"),
+                ntlval_fmt = "United States"
+              )
+          })
+        })
+      })
+      
+      
+      factor_panels <- lapply(names(factor_list), function(fac) {
+        fac_df <- factor_list[[fac]] %>%
+          mutate(
+            measure_display_fmt = paste0(
+              measure_display,
+              " ",
+              case_when(
+                compare_years == -1 ~ "?",
+                compare_years == 0  ~ "✗",
+                compare_years == 1  ~ "✓",
+                compare_years == 2  ~ "⚠",
+                TRUE ~ ""
+              )
+            )
+          )
+        # Build gt for this factor
+        fac_gt <- fac_df %>%
+          select(
+            measure_display = measure_display_fmt,
+            description,
+            value_ci,
+            stateval_fmt,
+            ntlval_fmt
+          ) %>%
+          arrange(measure_display) %>%
+          gt::gt() %>%
+          gt::cols_label(
+            measure_display = "Measure",
+            description = "Description",
+            value_ci = paste0(input$county, " (95% CI)"),
+            stateval_fmt = paste0(input$state, " (95% CI)"),
+            ntlval_fmt = "United States"
+          ) 
+        
+        # Return a sub-accordion panel for this Factor
+        bslib::accordion_panel(
+          title = fac,
+         # gt::gt_output(outputId = paste0("gt_", digest::digest(fac)))
+         uiOutput(paste0("gt_", digest::digest(fac)))
+        )
+      })
+      
+      # Wrap all factor panels in a sub-accordion
+      sub_acc <- bslib::accordion(!!!factor_panels, 
+                                  id = paste0("acc_", digest::digest(cat)),
+                                  multiple = TRUE, 
+                                  open = FALSE) # start w factors collapsed 
+      
+      category_panels <- lapply(names(category_list), function(cat) {
+        bslib::accordion_panel(
+          title = cat,
+          sub_acc
+        )
+      })
+      
+      bslib::accordion(
+        !!!category_panels,
+        id = "acc_category",
+        multiple = TRUE,
+        open = FALSE
+      )
+    })
+    
+    # Top-level accordion with all categories
+    bslib::accordion(!!!category_panels, id = "acc_category", multiple = TRUE,
+                     open = FALSE)
   })
+  
+  
+  
+  
+  observe({
+    df <- measure_values_data()
+    req(nrow(df) > 0)
+    
+    # Iterate through Factors and create render_gt outputs
+    df_split <- split(df, df$factor_name)
+    
+    for (fac in names(df_split)) {
+      local({
+        f <- fac
+        fac_df <- df_split[[f]] %>%
+          mutate(
+            measure_display_fmt = paste0(
+              measure_display,
+              " ",
+              case_when(
+                compare_years == -1 ~ "?",
+                compare_years == 0  ~ "✗",
+                compare_years == 1  ~ "✓",
+                compare_years == 2  ~ "⚠",
+                TRUE ~ ""
+              )
+            )
+          )
+        output_id <- paste0("gt_", digest::digest(f))
+        
+        output[[output_id]] <- gt::render_gt({
+          fac_df %>%
+            select(
+              measure_display = measure_display_fmt,
+              description,
+              value_ci,
+              stateval_fmt,
+              ntlval_fmt
+            ) %>%
+            arrange(measure_display) %>%
+            gt::gt() %>%
+            gt::cols_label(
+              measure_display = "Measure",
+              description = "Description",
+              value_ci = paste0(input$county, " (95% CI)"),
+              stateval_fmt = paste0(input$state, " (95% CI)"),
+              ntlval_fmt = "United States"
+            ) 
+        })
+      })
+    }
+  })
+  
+  
   
   # Download handler for CSV
   output$download_data <- downloadHandler(
