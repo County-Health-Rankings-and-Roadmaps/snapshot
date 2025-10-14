@@ -18,6 +18,7 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(memoise)
   library(gt) 
+  library(bslib)
 })
 
 # ---- Repo Config ----
@@ -112,9 +113,21 @@ state_choices <- sort(unique(county_choices$state))
 ##################################################################################
 # ---- UI ----
 ui <- fluidPage(
+  # Responsive design meta tag
+  tags$head(tags$meta(name = "viewport", content = "width=device-width, initial-scale=1")),
+  
+  # Use Bootstrap 5 (fully responsive)
+  theme = bs_theme(version = 5, bootswatch = "flatly"),
+  
+  # Title
   titlePanel("County Snapshot"),
-  sidebarLayout(
-    sidebarPanel(
+  
+  # Switch to a layout that collapses on mobile
+  layout_sidebar(
+    sidebar = sidebar(
+      # Give sidebar elements some breathing room
+      class = "p-3",
+      
       # State selection
       selectInput(
         inputId = "state",
@@ -126,35 +139,46 @@ ui <- fluidPage(
       # County dropdown filtered by state
       uiOutput("county_ui"),
       
-      uiOutput("year_ui"), 
+      uiOutput("year_ui"),
       
-      tags$hr(),
+      hr(),
+      
       helpText(
-        "Data loaded from: ",
+        "Data loaded from:",
         a(
           sprintf("%s/%s@%s/%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR),
           href = sprintf("https://github.com/%s/%s/tree/%s/%s",
-                         GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR)
-          #, target = "_blank"
+                         GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR),
+          target = "_blank"
         )
-      )), 
-    mainPanel(
+      )
+    ),
+    
+    # Main content area
+    main = mainPanel(
+      class = "p-3",
       
-                 br(),
-                 uiOutput("note_latest"),
-                 downloadButton("download_data", "Download these data as a csv"),
-                 helpText(
-                   HTML("
-    <b>Legend:</b> 
-    ✓ = Comparable with prior years | 
-    ✗ = Not comparable with prior years | 
-    ⚠ = Use caution when comparing with prior years
-  ")), 
-                 gt::gt_output("snapshot")
-                 
-        
-        
+      br(),
+      uiOutput("note_latest"),
       
+      # Larger, more tappable download button
+      downloadButton("download_data", "Download these data as a CSV", class = "btn btn-primary mb-3"),
+      
+      # Improved legend readability
+      helpText(
+        HTML("
+          <b>Legend:</b><br>
+          ✓ Comparable with prior years<br>
+          ✗ Not comparable with prior years<br>
+          ⚠ Use caution when comparing with prior years
+        ")
+      ),
+      
+      # Wrap gt output in a container that expands responsively
+      div(
+        style = "overflow-x: auto; width: 100%;",
+        gt_output("snapshot")
+      )
     )
   )
 )
