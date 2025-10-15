@@ -176,13 +176,13 @@ ui <- semanticPage(
               
               div(class = "ui segment",
                   uiOutput("note_latest"),
-                  downloadButton("download_data", "Download these data as a csv\n"),
-                  
-                  helpText(HTML("\n
-                    <b>Legend:</b> 
-                    ✓ = Comparable with prior years | 
-                    ✗ = Not comparable with prior years | 
-                    ⚠ = Use caution when comparing with prior years
+                  downloadButton("download_data", "Download these data as a csv"),
+                  tags$br(), tags$br(), 
+                  helpText(HTML("
+                    <b>Legend:</b> <br>
+                    ✓ Comparable with prior years<br>
+                    ✗ Not comparable with prior years<br>
+                    ⚠ Use caution when comparing with prior years
                   ")),
                   
                   # Replace accordion with semantic layout (custom module, for example)
