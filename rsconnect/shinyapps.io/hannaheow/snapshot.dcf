@@ -1,0 +1,12 @@
+name: snapshot
+title: snapshot
+username: hannaheow
+account: hannaheow
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 15745521
+bundleId: 11030528
+url: https://hannaheow.shinyapps.io/snapshot/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE

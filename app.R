@@ -641,7 +641,7 @@ server <- function(input, output, session) {
       sub_acc <- bslib::accordion(!!!factor_panels, 
                                   id = paste0("acc_", digest::digest(cat)),
                                   multiple = TRUE, 
-                                  open = FALSE) # start w factors collapsed 
+                                  open = TRUE) # start w factors collapsed 
       
       category_panels <- lapply(names(category_list), function(cat) {
         bslib::accordion_panel(
@@ -654,7 +654,7 @@ server <- function(input, output, session) {
         !!!category_panels,
         id = "acc_category",
         multiple = TRUE,
-        open = FALSE
+        open = TRUE
       )
     })
     
