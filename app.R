@@ -20,6 +20,7 @@ suppressPackageStartupMessages({
   library(gt) 
   library(bslib)
   library(digest)
+  library(shiny.semantic)
 })
 
 # ---- Repo Config ----
@@ -113,50 +114,64 @@ state_choices <- sort(unique(county_choices$state))
 
 ##################################################################################
 # ---- UI ----
-ui <- fluidPage(
-  titlePanel("County Snapshot"),
-  sidebarLayout(
-    sidebarPanel(
-      # State selection
-      selectInput(
-        inputId = "state",
-        label = "Select State:",
-        choices = state_choices,
-        selected = state_choices[1]
-      ),
+ui <- semanticPage(
+  title = "County Snapshot",
+  
+  div(class = "ui container",
       
-      # County dropdown filtered by state
-      uiOutput("county_ui"),
+      h2(class = "ui header", "County Snapshot"),
+      div(class = "ui divider"),
       
-      uiOutput("year_ui"), 
-      
-      tags$hr(),
-      helpText(
-        "Data loaded from: ",
-        a(
-          sprintf("%s/%s@%s/%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR),
-          href = sprintf("https://github.com/%s/%s/tree/%s/%s",
-                         GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR)
-          #, target = "_blank"
-        )
-      )), 
-    mainPanel(
-      
-                 br(),
-                 uiOutput("note_latest"),
-                 downloadButton("download_data", "Download these data as a csv"),
-                 helpText(
-                   HTML("
-    <b>Legend:</b> 
-    ✓ = Comparable with prior years | 
-    ✗ = Not comparable with prior years | 
-    ⚠ = Use caution when comparing with prior years
-  ")), 
-                 uiOutput("snapshot_accordion")
-                 
-        
-      
-    )
+      # Grid layout: left panel (filters) + right panel (main content)
+      div(class = "ui stackable grid",
+          
+          # --- Sidebar ---
+          div(class = "four wide column",
+              div(class = "ui raised segment",
+                  h4(class = "ui header", "Filters"),
+                  
+                  selectInput(
+                    inputId = "state",
+                    label = "Select State:",
+                    choices = state_choices,
+                    selected = state_choices[1]
+                  ),
+                  
+                  uiOutput("county_ui"),
+                  uiOutput("year_ui"),
+                  
+                  tags$hr(),
+                  helpText(
+                    "Data loaded from:",
+                    a(
+                      sprintf("%s/%s@%s/%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR),
+                      href = sprintf("https://github.com/%s/%s/tree/%s/%s",
+                                     GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR)
+                      #, target = "_blank"
+                    )
+                  )
+              )
+          ),
+          
+          # --- Main Panel ---
+          div(class = "twelve wide column",
+              
+              div(class = "ui segment",
+                  uiOutput("note_latest"),
+                  downloadButton("download_data", "Download these data as a csv\n"),
+                  
+                  helpText(HTML("\n
+                    <b>Legend:</b> 
+                    ✓ = Comparable with prior years | 
+                    ✗ = Not comparable with prior years | 
+                    ⚠ = Use caution when comparing with prior years
+                  ")),
+                  
+                  # Replace accordion with semantic layout (custom module, for example)
+                  uiOutput("snapshot_semantic")
+              )
+          )
+      )
   )
 )
 
@@ -529,7 +544,7 @@ server <- function(input, output, session) {
       )
   })
   
-  output$snapshot_accordion <- renderUI({
+  output$snapshot_semantic <- renderUI({
     df <- measure_values_data() %>%
       mutate(
         measure_display_fmt = paste0(
@@ -544,123 +559,68 @@ server <- function(input, output, session) {
           )
         )
       )
-   
+    
     req(nrow(df) > 0)
     
     # Nest: Category -> Factor
     category_list <- split(df, df$category_name)
     
-    category_panels <- lapply(names(category_list), function(cat) {
+    # Each category becomes a segment with nested factor segments
+    category_segments <- lapply(names(category_list), function(cat) {
       cat_df <- category_list[[cat]]
-      
-      # Split by factor within this category
       factor_list <- split(cat_df, cat_df$factor_name)
       
-      
-      # Create GT outputs for each factor (so they render correctly)
-      lapply(names(factor_list), function(fac) {
-        local({
-          f <- fac
-          fac_df <- factor_list[[f]]
-          
-          output_id_ui <- paste0("gt_", digest::digest(f))
-          output_id_gt <- paste0("gt_inner_", digest::digest(f))
-          
-          # UI placeholder (nested output container)
-          output[[output_id_ui]] <- renderUI({
-            gt::gt_output(outputId = output_id_gt)
-          })
-          
-          # Render actual GT table
-          output[[output_id_gt]] <- gt::render_gt({
-            fac_df %>%
-              select(
-                measure_display = measure_display_fmt,
-                description,
-                value_ci,
-                stateval_fmt,
-                ntlval_fmt
-              ) %>%
-              arrange(measure_display) %>%
-              gt::gt() %>%
-              gt::cols_label(
-                measure_display = "Measure",
-                description = "Description",
-                value_ci = paste0(input$county, " (95% CI)"),
-                stateval_fmt = paste0(input$state, " (95% CI)"),
-                ntlval_fmt = "United States"
-              )
-          })
-        })
-      })
-      
-      
-      factor_panels <- lapply(names(factor_list), function(fac) {
-        fac_df <- factor_list[[fac]] %>%
-          mutate(
-            measure_display_fmt = paste0(
-              measure_display,
-              " ",
-              case_when(
-                compare_years == -1 ~ "?",
-                compare_years == 0  ~ "✗",
-                compare_years == 1  ~ "✓",
-                compare_years == 2  ~ "⚠",
-                TRUE ~ ""
-              )
-            )
-          )
-        # Build gt for this factor
-        fac_gt <- fac_df %>%
-          select(
-            measure_display = measure_display_fmt,
-            description,
-            value_ci,
-            stateval_fmt,
-            ntlval_fmt
-          ) %>%
-          arrange(measure_display) %>%
-          gt::gt() %>%
-          gt::cols_label(
-            measure_display = "Measure",
-            description = "Description",
-            value_ci = paste0(input$county, " (95% CI)"),
-            stateval_fmt = paste0(input$state, " (95% CI)"),
-            ntlval_fmt = "United States"
-          ) 
+      # Each factor within the category
+      factor_segments <- lapply(names(factor_list), function(fac) {
+        fac_df <- factor_list[[fac]]
         
-        # Return a sub-accordion panel for this Factor
-        bslib::accordion_panel(
-          title = fac,
-         # gt::gt_output(outputId = paste0("gt_", digest::digest(fac)))
-         uiOutput(paste0("gt_", digest::digest(fac)))
+        # Create a GT output for this factor
+        output_id_ui <- paste0("gt_", digest::digest(fac))
+        output_id_gt <- paste0("gt_inner_", digest::digest(fac))
+        
+        # Create the output placeholders
+        output[[output_id_ui]] <- renderUI({
+          gt::gt_output(outputId = output_id_gt)
+        })
+        
+        output[[output_id_gt]] <- gt::render_gt({
+          fac_df %>%
+            select(
+              measure_display = measure_display_fmt,
+              description,
+              value_ci,
+              stateval_fmt,
+              ntlval_fmt
+            ) %>%
+            arrange(measure_display) %>%
+            gt::gt() %>%
+            gt::cols_label(
+              measure_display = "Measure",
+              description = "Description",
+              value_ci = paste0(input$county, " (95% CI)"),
+              stateval_fmt = paste0(input$state, " (95% CI)"),
+              ntlval_fmt = "United States"
+            )
+        })
+        
+        # Semantic factor segment
+        div(
+          class = "ui segment",
+          h4(class = "ui header", fac),
+          uiOutput(output_id_ui)
         )
       })
       
-      # Wrap all factor panels in a sub-accordion
-      sub_acc <- bslib::accordion(!!!factor_panels, 
-                                  id = paste0("acc_", digest::digest(cat)),
-                                  multiple = TRUE, 
-                                  open = TRUE) # start w factors collapsed 
-      
-      category_panels <- lapply(names(category_list), function(cat) {
-        bslib::accordion_panel(
-          title = cat,
-          sub_acc
-        )
-      })
-      
-      bslib::accordion(
-        !!!category_panels,
-        id = "acc_category",
-        multiple = TRUE,
-        open = TRUE
+      # Category segment wrapping its factors
+      div(
+        class = "ui raised segment",
+        h3(class = "ui blue header", cat),
+        tagList(factor_segments)
       )
     })
     
-    # Top-level accordion with all categories
-    bslib::accordion(!!!category_panels, id = "acc_category", multiple = TRUE,
-                     open = FALSE)
+    # Combine all category segments
+    tagList(category_segments)
   })
   
   
