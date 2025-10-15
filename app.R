@@ -21,6 +21,7 @@ suppressPackageStartupMessages({
   library(bslib)
   library(digest)
   library(shiny.semantic)
+  library(htmltools)
 })
 
 # ---- Repo Config ----
@@ -116,10 +117,27 @@ state_choices <- sort(unique(county_choices$state))
 # ---- UI ----
 ui <- semanticPage(
   title = "County Snapshot",
+  tags$head(
+    tags$script(HTML("
+      // Toggle all segments
+      Shiny.addCustomMessageHandler('toggleSegments', function(msg) {
+        $('.factor-segment').each(function() {
+          if(msg.action === 'collapse') {
+            $(this).slideUp();
+          } else {
+            $(this).slideDown();
+          }
+        });
+      });
+    "))
+  ),
   
   div(class = "ui container",
+     
       
       h2(class = "ui header", "County Snapshot"),
+      actionButton("expand_all", "Expand All"),
+      actionButton("collapse_all", "Collapse All"),
       div(class = "ui divider"),
       
       # Grid layout: left panel (filters) + right panel (main content)
@@ -562,27 +580,22 @@ server <- function(input, output, session) {
     
     req(nrow(df) > 0)
     
-    # Nest: Category -> Factor
     category_list <- split(df, df$category_name)
     
-    # Each category becomes a segment with nested factor segments
-    category_segments <- lapply(names(category_list), function(cat) {
+    # --- Build category blocks ---
+    category_blocks <- lapply(names(category_list), function(cat) {
       cat_df <- category_list[[cat]]
       factor_list <- split(cat_df, cat_df$factor_name)
       
-      # Each factor within the category
-      factor_segments <- lapply(names(factor_list), function(fac) {
+      # --- Build factor blocks ---
+      factor_blocks <- lapply(names(factor_list), function(fac) {
         fac_df <- factor_list[[fac]]
         
-        # Create a GT output for this factor
         output_id_ui <- paste0("gt_", digest::digest(fac))
         output_id_gt <- paste0("gt_inner_", digest::digest(fac))
         
-        # Create the output placeholders
-        output[[output_id_ui]] <- renderUI({
-          gt::gt_output(outputId = output_id_gt)
-        })
-        
+        # Create outputs
+        output[[output_id_ui]] <- renderUI({ gt::gt_output(outputId = output_id_gt) })
         output[[output_id_gt]] <- gt::render_gt({
           fac_df %>%
             select(
@@ -603,28 +616,40 @@ server <- function(input, output, session) {
             )
         })
         
-        # Semantic factor segment
+        # Factor block: show content by default
         div(
-          class = "ui segment",
+          class = "ui segment factor-segment",
           h4(class = "ui header", fac),
           uiOutput(output_id_ui)
         )
       })
       
-      # Category segment wrapping its factors
       div(
         class = "ui raised segment",
         h3(class = "ui blue header", cat),
-        tagList(factor_segments)
+        factor_blocks
       )
     })
     
-    # Combine all category segments
-    tagList(category_segments)
+    div(class = "ui segments", category_blocks)
+ 
+    
+    # --- Wrap everything in top-level accordion ---
+    top_accordion <- div(class = "ui styled fluid accordion", category_blocks)
+    
+    # Buttons to collapse/expand all
+    observeEvent(input$collapse_all, {
+      session$sendCustomMessage("toggleSegments", list(action = "collapse"))
+    })
+    
+    observeEvent(input$expand_all, {
+      session$sendCustomMessage("toggleSegments", list(action = "expand"))
+    })
+    
+    # Initialize Semantic UI accordions via JS
+    session$sendCustomMessage("initAccordion", list())
+    top_accordion
   })
-  
-  
-  
   
   observe({
     df <- measure_values_data()
