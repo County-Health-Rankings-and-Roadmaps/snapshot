@@ -399,8 +399,8 @@ server <- function(input, output, session) {
     # Join county data and map
     measure_values <- county_df() %>%
      #measure_values = county_df %>% 
-      left_join(state_df(), by = "measure_id") %>% 
-      left_join(ntl_df(), by = "measure_id") %>% 
+      left_join(state_df(), by = c("measure_id", "state_fips")) %>% 
+      left_join(ntl_df(), by = c("measure_id", "state_fips")) %>% 
       left_join(measure_map, by = "measure_id") %>%
       mutate(
         measure_display = paste0(measure_name, " (", years_used, ")"),

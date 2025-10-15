@@ -5,7 +5,7 @@ account: hannaheow
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 15745521
-bundleId: 11030528
+bundleId: 11039363
 url: https://hannaheow.shinyapps.io/snapshot/
 version: 1
 asMultiple: FALSE
