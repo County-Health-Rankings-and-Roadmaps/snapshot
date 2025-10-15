@@ -18,6 +18,10 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(memoise)
   library(gt) 
+  library(bslib)
+  library(digest)
+  library(shiny.semantic)
+  library(htmltools)
 })
 
 # ---- Repo Config ----
@@ -111,51 +115,81 @@ state_choices <- sort(unique(county_choices$state))
 
 ##################################################################################
 # ---- UI ----
-ui <- fluidPage(
-  titlePanel("County Snapshot"),
-  sidebarLayout(
-    sidebarPanel(
-      # State selection
-      selectInput(
-        inputId = "state",
-        label = "Select State:",
-        choices = state_choices,
-        selected = state_choices[1]
-      ),
+ui <- semanticPage(
+  title = "County Snapshot",
+  tags$head(
+    tags$script(HTML("
+      // Toggle all segments
+      Shiny.addCustomMessageHandler('toggleSegments', function(msg) {
+        $('.factor-segment').each(function() {
+          if(msg.action === 'collapse') {
+            $(this).slideUp();
+          } else {
+            $(this).slideDown();
+          }
+        });
+      });
+    "))
+  ),
+  
+  div(class = "ui container",
+     
       
-      # County dropdown filtered by state
-      uiOutput("county_ui"),
+      h2(class = "ui header", "County Snapshot"),
+      actionButton("expand_all", "Expand All"),
+      actionButton("collapse_all", "Collapse All"),
+      div(class = "ui divider"),
       
-      uiOutput("year_ui"), 
-      
-      tags$hr(),
-      helpText(
-        "Data loaded from: ",
-        a(
-          sprintf("%s/%s@%s/%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR),
-          href = sprintf("https://github.com/%s/%s/tree/%s/%s",
-                         GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR)
-          #, target = "_blank"
-        )
-      )), 
-    mainPanel(
-      
-                 br(),
-                 uiOutput("note_latest"),
-                 downloadButton("download_data", "Download these data as a csv"),
-                 helpText(
-                   HTML("
-    <b>Legend:</b> 
-    ✓ = Comparable with prior years | 
-    ✗ = Not comparable with prior years | 
-    ⚠ = Use caution when comparing with prior years
-  ")), 
-                 gt::gt_output("snapshot")
-                 
-        
-        
-      
-    )
+      # Grid layout: left panel (filters) + right panel (main content)
+      div(class = "ui stackable grid",
+          
+          # --- Sidebar ---
+          div(class = "four wide column",
+              div(class = "ui raised segment",
+                  h4(class = "ui header", "Filters"),
+                  
+                  selectInput(
+                    inputId = "state",
+                    label = "Select State:",
+                    choices = state_choices,
+                    selected = state_choices[1]
+                  ),
+                  
+                  uiOutput("county_ui"),
+                  uiOutput("year_ui"),
+                  
+                  tags$hr(),
+                  helpText(
+                    "Data loaded from:",
+                    a(
+                      sprintf("%s/%s@%s/%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR),
+                      href = sprintf("https://github.com/%s/%s/tree/%s/%s",
+                                     GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR)
+                      #, target = "_blank"
+                    )
+                  )
+              )
+          ),
+          
+          # --- Main Panel ---
+          div(class = "twelve wide column",
+              
+              div(class = "ui segment",
+                  uiOutput("note_latest"),
+                  downloadButton("download_data", "Download these data as a csv"),
+                  tags$br(), tags$br(), 
+                  helpText(HTML("
+                    <b>Legend:</b> <br>
+                    ✓ Comparable with prior years<br>
+                    ✗ Not comparable with prior years<br>
+                    ⚠ Use caution when comparing with prior years
+                  ")),
+                  
+                  # Replace accordion with semantic layout (custom module, for example)
+                  uiOutput("snapshot_semantic")
+              )
+          )
+      )
   )
 )
 
@@ -265,14 +299,15 @@ server <- function(input, output, session) {
     chosen <- county_choices %>%
       filter(state == input$state & county == input$county) #note that the input county is the county name 
     
-    #for quick n dirty testing 
-    #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
+    # Defensive check
+    req(nrow(chosen) > 0)
     
-    state_fips <- chosen$statecode
-    county_fips <- chosen$countycode
+    state_fips <- chosen$statecode[1]
+    county_fips <- chosen$countycode[1]
+    req(state_fips, county_fips)
     
-    df <- year_data(); req(df)
-    
+    df <- year_data()
+    req(df)
    
     
     # filter measure data by fips
@@ -284,17 +319,21 @@ server <- function(input, output, session) {
   })
   
   state_df <- reactive({
-    req(input$state, input$year)
+    req(input$state, input$county, input$year)
     y <- resolved_year(); req(y) 
     
     # find the fips codes for the chosen state + county
     chosen <- county_choices %>%
       filter(state == input$state & county == input$county) #note that the input county is the county name
+    # Defensive check
+    req(nrow(chosen) > 0)  # ensures chosen is not empty
     
     #for quick n dirty testing 
     #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
+
     
-    state_fips <- chosen$statecode
+    state_fips <- chosen$statecode[1]
+  req(state_fips)
     county_fips <- "000"
     
     # construct path to state data CSV for the chosen year
@@ -343,8 +382,11 @@ server <- function(input, output, session) {
   
   # Reactive: raw measure values for the selected county/year
   measure_values_data <- reactive({
-    req(input$county, input$year)
+    req(input$county, input$year, input$state)
     y <- resolved_year(); req(y) 
+    
+    # Require data from upstream reactives to be ready
+    req(county_df(), state_df(), ntl_df())
     
     # Build the measure mapping
     measure_map <- mea_names %>%
@@ -520,10 +562,145 @@ server <- function(input, output, session) {
       )
   })
   
-  # Render the table
-  output$snapshot <- gt::render_gt({
-    snapshot_data()
+  output$snapshot_semantic <- renderUI({
+    df <- measure_values_data() %>%
+      mutate(
+        measure_display_fmt = paste0(
+          measure_display,
+          " ",
+          case_when(
+            compare_years == -1 ~ "?",
+            compare_years == 0  ~ "✗",
+            compare_years == 1  ~ "✓",
+            compare_years == 2  ~ "⚠",
+            TRUE ~ ""
+          )
+        )
+      )
+    
+    req(nrow(df) > 0)
+    
+    category_list <- split(df, df$category_name)
+    
+    # --- Build category blocks ---
+    category_blocks <- lapply(names(category_list), function(cat) {
+      cat_df <- category_list[[cat]]
+      factor_list <- split(cat_df, cat_df$factor_name)
+      
+      # --- Build factor blocks ---
+      factor_blocks <- lapply(names(factor_list), function(fac) {
+        fac_df <- factor_list[[fac]]
+        
+        output_id_ui <- paste0("gt_", digest::digest(fac))
+        output_id_gt <- paste0("gt_inner_", digest::digest(fac))
+        
+        # Create outputs
+        output[[output_id_ui]] <- renderUI({ gt::gt_output(outputId = output_id_gt) })
+        output[[output_id_gt]] <- gt::render_gt({
+          fac_df %>%
+            select(
+              measure_display = measure_display_fmt,
+              description,
+              value_ci,
+              stateval_fmt,
+              ntlval_fmt
+            ) %>%
+            arrange(measure_display) %>%
+            gt::gt() %>%
+            gt::cols_label(
+              measure_display = "Measure",
+              description = "Description",
+              value_ci = paste0(input$county, " (95% CI)"),
+              stateval_fmt = paste0(input$state, " (95% CI)"),
+              ntlval_fmt = "United States"
+            )
+        })
+        
+        # Factor block: show content by default
+        div(
+          class = "ui segment factor-segment",
+          h4(class = "ui header", fac),
+          uiOutput(output_id_ui)
+        )
+      })
+      
+      div(
+        class = "ui raised segment",
+        h3(class = "ui blue header", cat),
+        factor_blocks
+      )
+    })
+    
+    div(class = "ui segments", category_blocks)
+ 
+    
+    # --- Wrap everything in top-level accordion ---
+    top_accordion <- div(class = "ui styled fluid accordion", category_blocks)
+    
+    # Buttons to collapse/expand all
+    observeEvent(input$collapse_all, {
+      session$sendCustomMessage("toggleSegments", list(action = "collapse"))
+    })
+    
+    observeEvent(input$expand_all, {
+      session$sendCustomMessage("toggleSegments", list(action = "expand"))
+    })
+    
+    # Initialize Semantic UI accordions via JS
+    session$sendCustomMessage("initAccordion", list())
+    top_accordion
   })
+  
+  observe({
+    df <- measure_values_data()
+    req(nrow(df) > 0)
+    
+    # Iterate through Factors and create render_gt outputs
+    df_split <- split(df, df$factor_name)
+    
+    for (fac in names(df_split)) {
+      local({
+        f <- fac
+        fac_df <- df_split[[f]] %>%
+          mutate(
+            measure_display_fmt = paste0(
+              measure_display,
+              " ",
+              case_when(
+                compare_years == -1 ~ "?",
+                compare_years == 0  ~ "✗",
+                compare_years == 1  ~ "✓",
+                compare_years == 2  ~ "⚠",
+                TRUE ~ ""
+              )
+            )
+          )
+        output_id <- paste0("gt_", digest::digest(f))
+        
+        output[[output_id]] <- gt::render_gt({
+          fac_df %>%
+            select(
+              measure_display = measure_display_fmt,
+              description,
+              value_ci,
+              stateval_fmt,
+              ntlval_fmt
+            ) %>%
+            arrange(measure_display) %>%
+            gt::gt() %>%
+            gt::cols_label(
+              measure_display = "Measure",
+              description = "Description",
+              value_ci = paste0(input$county, " (95% CI)"),
+              stateval_fmt = paste0(input$state, " (95% CI)"),
+              ntlval_fmt = "United States"
+            ) 
+        })
+      })
+    }
+  })
+  
+  
   
   # Download handler for CSV
   output$download_data <- downloadHandler(
