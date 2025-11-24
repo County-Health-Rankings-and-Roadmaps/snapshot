@@ -347,6 +347,7 @@ server <- function(input, output, session) {
     
     #for quick n dirty testing 
     #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
+
     
     
     state_fips <- chosen$statecode[1]
