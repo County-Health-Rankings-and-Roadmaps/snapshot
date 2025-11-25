@@ -26,9 +26,9 @@ suppressPackageStartupMessages({
 
 # ---- Repo Config ----
 GITHUB_OWNER  <- Sys.getenv("CHD_GITHUB_OWNER",  unset = "County-Health-Rankings-and-Roadmaps")
-GITHUB_REPO   <- Sys.getenv("CHD_GITHUB_REPO",   unset = "chrr_measure_calcs")
+GITHUB_REPO   <- Sys.getenv("CHD_GITHUB_REPO",   unset = "relational_data")
 GITHUB_BRANCH <- Sys.getenv("CHD_GITHUB_BRANCH", unset = "main")
-DATA_DIR      <- Sys.getenv("CHD_DATA_DIR",      unset = "relational_data")
+#DATA_DIR      <- Sys.getenv("CHD_DATA_DIR",      unset = "relational_data")
 GITHUB_TOKEN  <- Sys.getenv("GITHUB_TOKEN", unset = NA)
 
 # ---- Helpers: GitHub API and Raw URLs ----
@@ -58,11 +58,11 @@ read_csv_github <- function(path) {
 
 # load the names datasets that are not year, county, or measure specific (ie these are always loaded) 
 
-cat_names <- read_csv_github(file.path("relational_data/t_category.csv"))
-fac_names <- read_csv_github(file.path("relational_data/t_factor.csv"))
-foc_names <- read_csv_github(file.path("relational_data/t_focus_area.csv"))
-mea_years <- read_csv_github(file.path("relational_data/t_measure_years.csv")) %>% select(year, measure_id, years_used)
-mea_compare <- read_csv_github(file.path("relational_data/t_measure.csv"))
+cat_names <- read_csv_github(file.path("t_category.csv"))
+fac_names <- read_csv_github(file.path("t_factor.csv"))
+foc_names <- read_csv_github(file.path("t_focus_area.csv"))
+mea_years <- read_csv_github(file.path("t_measure_years.csv")) %>% select(year, measure_id, years_used)
+mea_compare <- read_csv_github(file.path("t_measure.csv"))
 # this has JRs comparable codes: compare_states and compare_years
 # where -1 = unknown, 0 = no, 1 = yes, and 2= with caution 
 
@@ -75,26 +75,43 @@ mea_names = mea_years %>%
 available_years <- reactiveVal(c("2023", "2022"))
 
 list_year_dirs <- memoise(function() {
-  url <- paste0("https://api.github.com/repos/", GITHUB_OWNER, "/", GITHUB_REPO,
-                "/contents/", utils::URLencode(DATA_DIR))
-  resp <- httr::GET(url, httr::add_headers(.headers = api_headers()))
+  # Build GitHub API URL for the repo directory
+  url <- paste0(
+    "https://api.github.com/repos/", GITHUB_OWNER, "/", GITHUB_REPO,
+    "/contents/"
+  )
+  
+  # Fetch the contents
+  resp <- httr::GET(url)
   if (httr::status_code(resp) >= 300) {
     warning("GitHub API call failed: ", httr::status_code(resp))
     return(character())
   }
-  items <- jsonlite::fromJSON(httr::content(resp, as = "text", encoding = "UTF-8"), flatten = TRUE)
+  
+  # Parse JSON response
+  items <- jsonlite::fromJSON(httr::content(resp, as = "text", encoding = "UTF-8"))
+  
   if (!length(items)) return(character())
+  
+  # Extract years from filenames
   years <- items %>%
     as_tibble() %>%
-    filter(type == "dir") %>%
+    filter(type == "file") %>%
     pull(name) %>%
-    keep(~ str_detect(.x, "^\\d{4}$")) %>%
+    str_extract("_([0-9]{4})\\.csv") %>%   # match "_20XX.csv"
+    str_remove_all("[^0-9]") %>%          # remove non-numeric chars
+    na.omit() %>%
+    unique() %>%
     sort(decreasing = TRUE)
-  years
+  
+  return(years)
 })
 
 
-available_years <- shiny::reactiveVal(NULL)
+
+
+
+#available_years <- shiny::reactiveVal(NULL)
 
 
 
@@ -133,7 +150,7 @@ ui <- semanticPage(
   ),
   
   div(class = "ui container",
-     
+      
       
       h2(class = "ui header", "County Snapshot"),
       actionButton("expand_all", "Expand All"),
@@ -162,9 +179,9 @@ ui <- semanticPage(
                   helpText(
                     "Data loaded from:",
                     a(
-                      sprintf("%s/%s@%s/%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR),
-                      href = sprintf("https://github.com/%s/%s/tree/%s/%s",
-                                     GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, DATA_DIR)
+                      sprintf("%s/%s@%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH),
+                      href = sprintf("https://github.com/%s/%s/tree/%s",
+                                     GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH)
                       #, target = "_blank"
                     )
                   )
@@ -275,17 +292,17 @@ server <- function(input, output, session) {
   year_data <- reactive({
     y <- resolved_year(); req(y)
     
-    mea_df <- read_csv_github(file.path(paste0("relational_data/", y, "/t_measure_data_", y, ".csv"))) 
+    mea_df <- read_csv_github(file.path(paste0("t_measure_data_", y, ".csv"))) 
     
-   
+    
     mea_df %>%
-        select(
+      select(
         county_fips, state_fips, measure_id, 
         raw_value, ci_low, ci_high
       )
   })
   
-
+  
   output$note_latest <- renderUI({
     if (identical(input$year, "Latest")) {
       HTML(sprintf("<em>Showing data from most recent release year: <b>%s</b>.</em>", resolved_year()))
@@ -308,7 +325,7 @@ server <- function(input, output, session) {
     
     df <- year_data()
     req(df)
-   
+    
     
     # filter measure data by fips
     df %>%
@@ -332,16 +349,17 @@ server <- function(input, output, session) {
     #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
 
     
+    
     state_fips <- chosen$statecode[1]
-  req(state_fips)
+    req(state_fips)
     county_fips <- "000"
     
     # construct path to state data CSV for the chosen year
-   # state_file = sprintf("https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv", 2023, 2023)
+    # state_file = sprintf("https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv", 2023, 2023)
     
     state_file <- sprintf(
-      "https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv",
-      y,y)
+      "https://github.com/County-Health-Rankings-and-Roadmaps/relational_data/raw/main/t_state_data_%s.csv",
+      y)
     
     # read state-level data for the selected year
     df <- readr::read_csv(state_file, show_col_types = FALSE)
@@ -363,8 +381,8 @@ server <- function(input, output, session) {
     # state_file = sprintf("https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv", 2023, 2023)
     
     state_file <- sprintf(
-      "https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv",
-      y,y)
+      "https://github.com/County-Health-Rankings-and-Roadmaps/relational_data/raw/main/t_state_data_%s.csv",
+      y)
     
     # read state-level data for the selected year
     df <- readr::read_csv(state_file, show_col_types = FALSE)
@@ -398,7 +416,7 @@ server <- function(input, output, session) {
     
     # Join county data and map
     measure_values <- county_df() %>%
-     #measure_values = county_df %>% 
+      #measure_values = county_df %>% 
       left_join(state_df(), by = c("measure_id", "state_fips")) %>% 
       left_join(ntl_df(), by = c("measure_id", "state_fips")) %>% 
       left_join(measure_map, by = "measure_id") %>%
@@ -632,7 +650,7 @@ server <- function(input, output, session) {
     })
     
     div(class = "ui segments", category_blocks)
- 
+    
     
     # --- Wrap everything in top-level accordion ---
     top_accordion <- div(class = "ui styled fluid accordion", category_blocks)
