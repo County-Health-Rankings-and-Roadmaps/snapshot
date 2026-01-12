@@ -71,7 +71,47 @@ mea_names = mea_years %>%
   full_join(mea_compare, by = c("measure_id", "year")) 
 
 
+#define default years so something shows before api call 
+available_years <- reactiveVal(c("2023", "2022"))
 
+list_year_dirs <- memoise(function() {
+  # Build GitHub API URL for the repo directory
+  url <- paste0(
+    "https://api.github.com/repos/", GITHUB_OWNER, "/", GITHUB_REPO,
+    "/contents/"
+  )
+  
+  # Fetch the contents
+  resp <- httr::GET(url)
+  if (httr::status_code(resp) >= 300) {
+    warning("GitHub API call failed: ", httr::status_code(resp))
+    return(character())
+  }
+  
+  # Parse JSON response
+  items <- jsonlite::fromJSON(httr::content(resp, as = "text", encoding = "UTF-8"))
+  
+  if (!length(items)) return(character())
+  
+  # Extract years from filenames
+  years <- items %>%
+    as_tibble() %>%
+    filter(type == "file") %>%
+    pull(name) %>%
+    str_extract("_([0-9]{4})\\.csv") %>%   # match "_20XX.csv"
+    str_remove_all("[^0-9]") %>%          # remove non-numeric chars
+    na.omit() %>%
+    unique() %>%
+    sort(decreasing = TRUE)
+  
+  return(years)
+})
+
+
+
+
+
+#available_years <- shiny::reactiveVal(NULL)
 
 
 
@@ -147,8 +187,8 @@ ui <- semanticPage(
                     ⚠ Use caution when comparing with prior years
                   ")),
                   
-                  # Replace accordion with semantic layout (custom module, for example)
-                  uiOutput("snapshot_semantic")
+                  # no accordion, just a nice gt 
+                  gt::gt_output("snapshot_semantic")
               )
           )
       )
@@ -164,14 +204,23 @@ ui <- semanticPage(
 server <- function(input, output, session) {
   
   # ---- Compute available years from mea_names ----
-  available_years <- reactive({
-    req(mea_names)  # make sure the data is loaded
-    mea_names %>%
-      pull(year) %>%       # extract the year column
-      unique() %>%         # keep unique values
-      sort(decreasing = TRUE)  # newest first
-  })
+  #available_years <- reactive({
+  #  req(mea_names)  # make sure the data is loaded
+  #  mea_names %>%
+  #    pull(year) %>%       # extract the year column
+  #    unique() %>%         # keep unique values
+  #    sort(decreasing = TRUE)  # newest first
+  #})
+  # provide default years immediately, update later with GitHub API
+  available_years <- reactiveVal(c("2023", "2022"))
   
+  observe({
+    yrs <- tryCatch(list_year_dirs(), error = function(e) character())
+    if (length(yrs) == 0) {
+      yrs <- c("2023", "2022")
+    }
+    available_years(yrs)
+  })
   
   
   output$year_ui <- renderUI({
@@ -260,6 +309,8 @@ server <- function(input, output, session) {
     chosen <- county_choices %>%
       filter(state == input$state & county == input$county) #note that the input county is the county name 
     
+    #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
+    
     # Defensive check
     req(nrow(chosen) > 0)
     
@@ -294,8 +345,8 @@ server <- function(input, output, session) {
 
     
     
-    state_fips <- chosen$statecode[1]
-    req(state_fips)
+    input_state_fips <- chosen$statecode[1]
+    req(input_state_fips)
     county_fips <- "000"
     
     # construct path to state data CSV for the chosen year
@@ -314,8 +365,9 @@ server <- function(input, output, session) {
     )
     
     # filter for the chosen state
+    #state_df = 
     df %>%
-      dplyr::filter(state_fips == !!state_fips) %>%
+      dplyr::filter(state_fips == !!input_state_fips) %>%
       dplyr::select(measure_id, state_fips, raw_value, ci_low,ci_high) %>% 
       rename(stateval = raw_value, 
              state_ci_low = ci_low, 
@@ -342,8 +394,9 @@ server <- function(input, output, session) {
     )
     req(df)  # only if downstream code needs df
     
-    # filter for the chosen state
-    df %>%
+    # filter ntl vals only 
+    #ntl_df = 
+      df %>%
       dplyr::filter(state_fips == "00") %>%
       dplyr::select(measure_id, state_fips, raw_value, ci_low,ci_high) %>% 
       rename(ntlval = raw_value, 
@@ -372,6 +425,8 @@ server <- function(input, output, session) {
     # Join county data and map
     measure_values <- county_df() %>%
       #measure_values = county_df %>% 
+      #left_join(state_df, by = c("measure_id", "state_fips")) %>% 
+      #left_join(ntl_df, by = c("measure_id", "state_fips")) %>% 
       left_join(state_df(), by = c("measure_id", "state_fips")) %>% 
       left_join(ntl_df(), by = c("measure_id", "state_fips")) %>% 
       left_join(measure_map, by = "measure_id") %>%
@@ -483,21 +538,12 @@ server <- function(input, output, session) {
   })
   
   
-  
-  
-  # Reactive: formatted gt table for display
-  snapshot_data <- reactive({
-    #quick n dirty 
-    #final_table = measure_values %>% left_join(state_df, by = c("measure_id", "state_fips")) %>% 
-    #  select(category_name, factor_name, measure_display, value_ci, stateval) %>%
-    #  arrange(category_name, factor_name, measure_display)
-    
+  snapshot_table <- reactive({
     final_table <- measure_values_data() %>%
-      # Add state comparison symbols next to the measure name
+      #final_table = measure_values %>% 
       mutate(
         measure_display_fmt = paste0(
-          measure_display,
-          " ",
+          measure_display, " ",
           case_when(
             compare_years == -1 ~ "?",
             compare_years == 0  ~ "✗",
@@ -506,7 +552,6 @@ server <- function(input, output, session) {
             TRUE ~ ""
           )
         ),
-        # Add text guidance for year comparison
         state_comparison_note = case_when(
           compare_states == -1 ~ "Use caution if comparing these data across states",
           compare_states == 0  ~ "These data are incomparable across states",
@@ -515,156 +560,42 @@ server <- function(input, output, session) {
           TRUE ~ ""
         )
       ) %>%
-      select(description, state_comparison_note,category_name, factor_name, value_ci, stateval_fmt, ntlval_fmt, 
-             measure_display_fmt) %>%
+      select(
+        category_name,
+        factor_name,
+        measure_display_fmt,
+        description,
+        state_comparison_note,
+        value_ci,
+        stateval_fmt,
+        ntlval_fmt
+      ) %>%
       arrange(category_name, factor_name)
     
-    final_table %>%
-      gt::gt(rowname_col = "measure_display_fmt") %>%
-      gt::tab_spanner(label = "Category", columns = "category_name") %>%
-      gt::tab_spanner(label = "Factor", columns = "factor_name") %>%
-      #gt::tab_spanner(label = "Comparison", columns = c("compare_states_fmt", "compare_years_fmt")) %>%
+    gt::gt(
+      final_table,
+      rowname_col = "measure_display_fmt",
+      groupname_col = c("category_name", "factor_name")
+    ) %>%
       gt::cols_label(
-        category_name = "Category",
-        factor_name = "Factor",
         value_ci = paste0(input$county, " (95% CI)"),
         stateval_fmt = paste0(input$state, " (95% CI)"),
         ntlval_fmt = "United States",
-        state_comparison_note = "",
-        description = ""
+        description = "Description",
+        state_comparison_note = ""
+      )%>%
+      gt::tab_options(
+        row_group.as_column = FALSE,
+        table.width = gt::pct(100)
       )
+    
+    
   })
   
-  output$snapshot_semantic <- renderUI({
-    df <- measure_values_data() %>%
-      mutate(
-        measure_display_fmt = paste0(
-          measure_display,
-          " ",
-          case_when(
-            compare_years == -1 ~ "?",
-            compare_years == 0  ~ "✗",
-            compare_years == 1  ~ "✓",
-            compare_years == 2  ~ "⚠",
-            TRUE ~ ""
-          )
-        )
-      )
-    
-    req(nrow(df) > 0)
-    
-    category_list <- split(df, df$category_name)
-    
-    # --- Build category blocks ---
-    category_blocks <- lapply(names(category_list), function(cat) {
-      cat_df <- category_list[[cat]]
-      factor_list <- split(cat_df, cat_df$factor_name)
-      
-      # --- Build factor blocks ---
-      factor_blocks <- lapply(names(factor_list), function(fac) {
-        fac_df <- factor_list[[fac]]
-        
-        output_id_ui <- paste0("gt_", digest::digest(fac))
-        output_id_gt <- paste0("gt_inner_", digest::digest(fac))
-        
-        # Create outputs
-        output[[output_id_ui]] <- renderUI({ gt::gt_output(outputId = output_id_gt) })
-        output[[output_id_gt]] <- gt::render_gt({
-          fac_df %>%
-            select(
-              measure_display = measure_display_fmt,
-              description,
-              value_ci,
-              stateval_fmt,
-              ntlval_fmt
-            ) %>%
-            arrange(measure_display) %>%
-            gt::gt() %>%
-            gt::cols_label(
-              measure_display = "Measure",
-              description = "Description",
-              value_ci = paste0(input$county, " (95% CI)"),
-              stateval_fmt = paste0(input$state, " (95% CI)"),
-              ntlval_fmt = "United States"
-            )
-        })
-        
-        # Factor block: show content by default
-        div(
-          class = "ui segment factor-segment",
-          h4(class = "ui header", fac),
-          uiOutput(output_id_ui)
-        )
-      })
-      
-      div(
-        class = "ui raised segment",
-        h3(class = "ui blue header", cat),
-        factor_blocks
-      )
-    })
-    
-    div(class = "ui segments", category_blocks)
-    
-    
-    # --- Wrap everything in top-level accordion ---
-    top_accordion <- div(class = "ui styled fluid accordion", category_blocks)
-    
-    
-    
-    
-    # Initialize Semantic UI accordions via JS
-    session$sendCustomMessage("initAccordion", list())
-    top_accordion
-  })
-  
-  observe({
-    df <- measure_values_data()
-    req(nrow(df) > 0)
-    
-    # Iterate through Factors and create render_gt outputs
-    df_split <- split(df, df$factor_name)
-    
-    for (fac in names(df_split)) {
-      local({
-        f <- fac
-        fac_df <- df_split[[f]] %>%
-          mutate(
-            measure_display_fmt = paste0(
-              measure_display,
-              " ",
-              case_when(
-                compare_years == -1 ~ "?",
-                compare_years == 0  ~ "✗",
-                compare_years == 1  ~ "✓",
-                compare_years == 2  ~ "⚠",
-                TRUE ~ ""
-              )
-            )
-          )
-        output_id <- paste0("gt_", digest::digest(f))
-        
-        output[[output_id]] <- gt::render_gt({
-          fac_df %>%
-            select(
-              measure_display = measure_display_fmt,
-              description,
-              value_ci,
-              stateval_fmt,
-              ntlval_fmt
-            ) %>%
-            arrange(measure_display) %>%
-            gt::gt() %>%
-            gt::cols_label(
-              measure_display = "Measure",
-              description = "Description",
-              value_ci = paste0(input$county, " (95% CI)"),
-              stateval_fmt = paste0(input$state, " (95% CI)"),
-              ntlval_fmt = "United States"
-            ) 
-        })
-      })
-    }
+
+  output$snapshot_semantic <- gt::render_gt({
+    req(nrow(measure_values_data()) > 0)
+    snapshot_table()
   })
   
   
