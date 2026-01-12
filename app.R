@@ -210,12 +210,12 @@ ui <- semanticPage(
                     ⚠ Use caution when comparing with prior years
                   ")),
                   
-                  # no accordion, just a nice gt 
-                  gt::gt_output("snapshot_semantic")
+                  # no accordion, just separate gts for each cat  
+                  uiOutput("category_tables_ui")
               )
-          )
       )
   )
+)
 )
 
 
@@ -599,6 +599,8 @@ server <- function(input, output, session) {
   
   
   snapshot_table <- reactive({
+    req(measure_values_data())
+    
     final_table <- measure_values_data() %>%
       #final_table = measure_values %>% 
       mutate(
@@ -632,48 +634,71 @@ server <- function(input, output, session) {
       ) %>%
       arrange(category_name, factor_name)
     
-    # Create a modified table for gt
-    final_table_gt <- final_table %>%
-      # For Demographics factor, blank out category_name
-      mutate(category_name_display = ifelse(factor_name == "Demographics", 
-                                            factor_name, 
-                                            paste0(category_name, ": ", factor_name))) %>% 
-      select(-category_name, -factor_name)
+    # Create a modified category for Demographics
+    final_table %>% 
+      mutate(
+        category_name_mod = ifelse(factor_name == "Demographics",
+                                   "Demographics Category",  # artificial category
+                                   category_name)
+      )
+  })
+  
+
+     
     
+# Render all tables as HTML inside one UI output
+output$category_tables_ui <- renderUI({
+  req(input$state, input$county, input$year)
+  
+  final_table_mod <- snapshot_table()
+  category_list <- split(final_table_mod, final_table_mod$category_name_mod)
+  
+  # Build HTML for each table
+  tables_html <- map(category_list, function(cat_df) {
+    cat_name <- unique(cat_df$category_name_mod)
     
-    gt::gt(
-      final_table_gt,
-      rowname_col = "measure_display_fmt",
-      groupname_col = "category_name_display"
-    ) %>%
-    # Make group names bold
-    gt::tab_style(
-      style = gt::cell_text(weight = "bold"),
-      locations = gt::cells_row_groups()
-    ) %>%
-      gt::cols_label(
+    cat_df <- cat_df %>%
+      mutate(row_group = factor_name) %>%
+      select(-category_name, -category_name_mod, -factor_name)
+    
+    tbl <- gt(cat_df,
+              rowname_col = "measure_display_fmt",
+              groupname_col = "row_group") %>%
+      tab_style(
+        style = cell_text(weight = "bold"),
+        locations = cells_row_groups()
+      ) %>%
+      cols_label(
         value_ci = paste0(input$county, " (95% CI)"),
         stateval_fmt = paste0(input$state, " (95% CI)"),
         ntlval_fmt = "United States",
         description = "",
         state_comparison_note = ""
-      )%>%
-      gt::tab_options(
+      ) %>%
+      tab_options(
         row_group.as_column = FALSE,
-        container.width = gt::pct(100), 
-        table.width = gt::pct(100),
-        data_row.padding = gt::px(6),
+        container.width = pct(100),
+        table.width = pct(100),
+        data_row.padding = px(6),
         heading.align = "left"
-      )
+      ) %>%
+      tab_header(title = paste0("Category: ", cat_name))
     
-    
+    # Convert gt to HTML and wrap in scrollable div
+    div(style = "overflow-x:auto; margin-bottom:20px;",
+        HTML(as_raw_html(tbl))
+    )
   })
   
+  do.call(tagList, tables_html)
+})
+    
+  
 
-  output$snapshot_semantic <- gt::render_gt({
-    req(nrow(measure_values_data()) > 0)
-    snapshot_table()
-  })
+  #output$snapshot_semantic <- gt::render_gt({
+  #  req(nrow(measure_values_data()) > 0)
+  #  snapshot_table()
+  #})
   
   
   
@@ -691,6 +716,6 @@ server <- function(input, output, session) {
       write.csv(measure_values_data(), file, row.names = FALSE)
     }
   )
-}
+  }
 
-shinyApp(ui, server)
+shinyApp(ui = ui, server = server)
