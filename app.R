@@ -169,7 +169,7 @@ ui <- semanticPage(
           # --- Sidebar ---
           div(class = "four wide column",
               div(class = "ui raised segment",
-                  h4(class = "ui header", "Filters"),
+                  h4(class = "ui header", ""),
                   
                   selectInput(
                     inputId = "state",
@@ -632,16 +632,30 @@ server <- function(input, output, session) {
       ) %>%
       arrange(category_name, factor_name)
     
+    # Create a modified table for gt
+    final_table_gt <- final_table %>%
+      # For Demographics factor, blank out category_name
+      mutate(category_name_display = ifelse(factor_name == "Demographics", 
+                                            factor_name, 
+                                            paste0(category_name, ": ", factor_name))) %>% 
+      select(-category_name, -factor_name)
+    
+    
     gt::gt(
-      final_table,
+      final_table_gt,
       rowname_col = "measure_display_fmt",
-      groupname_col = c("category_name", "factor_name")
+      groupname_col = "category_name_display"
+    ) %>%
+    # Make group names bold
+    gt::tab_style(
+      style = gt::cell_text(weight = "bold"),
+      locations = gt::cells_row_groups()
     ) %>%
       gt::cols_label(
         value_ci = paste0(input$county, " (95% CI)"),
         stateval_fmt = paste0(input$state, " (95% CI)"),
         ntlval_fmt = "United States",
-        description = "Description",
+        description = "",
         state_comparison_note = ""
       )%>%
       gt::tab_options(
