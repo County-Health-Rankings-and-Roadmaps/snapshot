@@ -210,12 +210,12 @@ ui <- semanticPage(
                     ⚠ Use caution when comparing with prior years
                   ")),
                   
-                  # no accordion, just a nice gt 
-                  gt::gt_output("snapshot_semantic")
+                  # no accordion, just separate gts for each cat  
+                  uiOutput("category_tables_ui")
               )
-          )
       )
   )
+)
 )
 
 
@@ -632,48 +632,93 @@ server <- function(input, output, session) {
       ) %>%
       arrange(category_name, factor_name)
     
-    # Create a modified table for gt
-    final_table_gt <- final_table %>%
-      # For Demographics factor, blank out category_name
-      mutate(category_name_display = ifelse(factor_name == "Demographics", 
-                                            factor_name, 
-                                            paste0(category_name, ": ", factor_name))) %>% 
-      select(-category_name, -factor_name)
-    
-    
-    gt::gt(
-      final_table_gt,
-      rowname_col = "measure_display_fmt",
-      groupname_col = "category_name_display"
-    ) %>%
-    # Make group names bold
-    gt::tab_style(
-      style = gt::cell_text(weight = "bold"),
-      locations = gt::cells_row_groups()
-    ) %>%
-      gt::cols_label(
-        value_ci = paste0(input$county, " (95% CI)"),
-        stateval_fmt = paste0(input$state, " (95% CI)"),
-        ntlval_fmt = "United States",
-        description = "",
-        state_comparison_note = ""
-      )%>%
-      gt::tab_options(
-        row_group.as_column = FALSE,
-        container.width = gt::pct(100), 
-        table.width = gt::pct(100),
-        data_row.padding = gt::px(6),
-        heading.align = "left"
+    # Step 1: Create a modified category for Demographics
+    final_table_mod <- final_table %>%
+      mutate(
+        category_name_mod = ifelse(factor_name == "Demographics",
+                                   "Demographics Category",  # artificial category
+                                   category_name)
       )
     
+    # Step 2: Split by the modified category
+    category_list <- split(final_table_mod, final_table_mod$category_name_mod)
     
+    # Step 3: Create a list of gt tables
+    gt_tables <- map(names(category_list), function(cat_name) {
+      
+      cat_df <- category_list[[cat_name]]
+      
+      # Make row group based on factor_name only
+      cat_df <- cat_df %>%
+        mutate(row_group = factor_name) %>%
+        select(-category_name, -category_name_mod, -factor_name)  # remove original grouping cols
+      # Build the gt table
+      gt_tbl <- gt::gt(
+        cat_df,
+        rowname_col = "measure_display_fmt",
+        groupname_col = "row_group"
+      ) %>%
+        # Make row group bold
+        gt::tab_style(
+          style = gt::cell_text(weight = "bold"),
+          locations = gt::cells_row_groups()
+        ) %>%
+        # Add column labels
+        gt::cols_label(
+          value_ci = paste0(input$county, " (95% CI)"),
+          stateval_fmt = paste0(input$state, " (95% CI)"),
+          ntlval_fmt = "United States",
+          description = "",
+          state_comparison_note = ""
+        ) %>%
+        # Set table options
+        gt::tab_options(
+          row_group.as_column = FALSE,
+          container.width = gt::pct(100),
+          table.width = gt::pct(100),
+          data_row.padding = gt::px(6),
+          heading.align = "left"
+        ) %>%
+        # Add a caption/header
+        gt::tab_header(
+          title = paste0("Category: ", cat_name)
+        )
+      
+      gt_tbl
+    })
   })
+    
+    
+    output$category_tables_ui <- renderUI({
+      req(input$state, input$county, input$year)  # only show after selections
+      
+      tbls <- snapshot_table()
+      
+      # Create a gt_output for each table
+      tbl_ui <- map(names(tbls), function(cat_name) {
+        output_id <- paste0("gt_", gsub("\\s+", "_", cat_name))  # unique output ID
+        
+        # assign render_gt dynamically
+        output[[output_id]] <- gt::render_gt({ tbls[[cat_name]] })
+        
+        # wrap in a div with some spacing
+        div(
+          class = "ui segment",
+          gt_output(output_id),
+          style = "margin-bottom: 20px;"  # spacing between tables
+        )
+      })
+      
+      # Wrap all tables in a vertical container
+      do.call(tagList, tbl_ui)
+    })
+    
   
 
-  output$snapshot_semantic <- gt::render_gt({
-    req(nrow(measure_values_data()) > 0)
-    snapshot_table()
-  })
+  #output$snapshot_semantic <- gt::render_gt({
+  #  req(nrow(measure_values_data()) > 0)
+  #  snapshot_table()
+  #})
   
   
   
@@ -691,6 +736,6 @@ server <- function(input, output, session) {
       write.csv(measure_values_data(), file, row.names = FALSE)
     }
   )
-}
+  }
 
-shinyApp(ui, server)
+shinyApp(ui = ui, server = server)
