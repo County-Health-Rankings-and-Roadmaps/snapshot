@@ -71,47 +71,7 @@ mea_names = mea_years %>%
   full_join(mea_compare, by = c("measure_id", "year")) 
 
 
-#define default years so something shows before api call 
-available_years <- reactiveVal(c("2023", "2022"))
 
-list_year_dirs <- memoise(function() {
-  # Build GitHub API URL for the repo directory
-  url <- paste0(
-    "https://api.github.com/repos/", GITHUB_OWNER, "/", GITHUB_REPO,
-    "/contents/"
-  )
-  
-  # Fetch the contents
-  resp <- httr::GET(url)
-  if (httr::status_code(resp) >= 300) {
-    warning("GitHub API call failed: ", httr::status_code(resp))
-    return(character())
-  }
-  
-  # Parse JSON response
-  items <- jsonlite::fromJSON(httr::content(resp, as = "text", encoding = "UTF-8"))
-  
-  if (!length(items)) return(character())
-  
-  # Extract years from filenames
-  years <- items %>%
-    as_tibble() %>%
-    filter(type == "file") %>%
-    pull(name) %>%
-    str_extract("_([0-9]{4})\\.csv") %>%   # match "_20XX.csv"
-    str_remove_all("[^0-9]") %>%          # remove non-numeric chars
-    na.omit() %>%
-    unique() %>%
-    sort(decreasing = TRUE)
-  
-  return(years)
-})
-
-
-
-
-
-#available_years <- shiny::reactiveVal(NULL)
 
 
 
@@ -134,27 +94,12 @@ state_choices <- sort(unique(county_choices$state))
 # ---- UI ----
 ui <- semanticPage(
   title = "County Snapshot",
-  tags$head(
-    tags$script(HTML("
-      // Toggle all segments
-      Shiny.addCustomMessageHandler('toggleSegments', function(msg) {
-        $('.factor-segment').each(function() {
-          if(msg.action === 'collapse') {
-            $(this).slideUp();
-          } else {
-            $(this).slideDown();
-          }
-        });
-      });
-    "))
-  ),
   
   div(class = "ui container",
       
       
       h2(class = "ui header", "County Snapshot"),
-      actionButton("expand_all", "Expand All"),
-      actionButton("collapse_all", "Collapse All"),
+      
       div(class = "ui divider"),
       
       # Grid layout: left panel (filters) + right panel (main content)
@@ -218,17 +163,16 @@ ui <- semanticPage(
 # ---- Server ----
 server <- function(input, output, session) {
   
-  
-  # provide default years immediately, update later with GitHub API
-  available_years <- reactiveVal(c("2023", "2022"))
-  
-  observe({
-    yrs <- tryCatch(list_year_dirs(), error = function(e) character())
-    if (length(yrs) == 0) {
-      yrs <- c("2023", "2022")
-    }
-    available_years(yrs)
+  # ---- Compute available years from mea_names ----
+  available_years <- reactive({
+    req(mea_names)  # make sure the data is loaded
+    mea_names %>%
+      pull(year) %>%       # extract the year column
+      unique() %>%         # keep unique values
+      sort(decreasing = TRUE)  # newest first
   })
+  
+  
   
   output$year_ui <- renderUI({
     yrs <- available_years()
@@ -361,8 +305,13 @@ server <- function(input, output, session) {
       "https://github.com/County-Health-Rankings-and-Roadmaps/relational_data/raw/main/t_state_data_%s.csv",
       y)
     
-    # read state-level data for the selected year
-    df <- readr::read_csv(state_file, show_col_types = FALSE)
+    df <- tryCatch(
+      readr::read_csv(state_file, show_col_types = FALSE),
+      error = function(e) { 
+        warning("Failed to load state data: ", e$message)
+        return(NULL)
+      }
+    )
     
     # filter for the chosen state
     df %>%
@@ -384,8 +333,14 @@ server <- function(input, output, session) {
       "https://github.com/County-Health-Rankings-and-Roadmaps/relational_data/raw/main/t_state_data_%s.csv",
       y)
     
-    # read state-level data for the selected year
-    df <- readr::read_csv(state_file, show_col_types = FALSE)
+    df <- tryCatch(
+      readr::read_csv(state_file, show_col_types = FALSE),
+      error = function(e) { 
+        warning("Failed to load state data: ", e$message)
+        return(NULL)
+      }
+    )
+    req(df)  # only if downstream code needs df
     
     # filter for the chosen state
     df %>%
@@ -655,14 +610,8 @@ server <- function(input, output, session) {
     # --- Wrap everything in top-level accordion ---
     top_accordion <- div(class = "ui styled fluid accordion", category_blocks)
     
-    # Buttons to collapse/expand all
-    observeEvent(input$collapse_all, {
-      session$sendCustomMessage("toggleSegments", list(action = "collapse"))
-    })
     
-    observeEvent(input$expand_all, {
-      session$sendCustomMessage("toggleSegments", list(action = "expand"))
-    })
+    
     
     # Initialize Semantic UI accordions via JS
     session$sendCustomMessage("initAccordion", list())
