@@ -96,7 +96,7 @@ ui <- semanticPage(
   title = "County Snapshot",
   
   div(class = "ui container",
-     
+      
       
       h2(class = "ui header", "County Snapshot"),
       
@@ -236,17 +236,17 @@ server <- function(input, output, session) {
   year_data <- reactive({
     y <- resolved_year(); req(y)
     
-    mea_df <- read_csv_github(paste0("t_measure_data_", y, ".csv"))
+    mea_df <- read_csv_github(file.path(paste0("t_measure_data_", y, ".csv"))) 
     
-   
+    
     mea_df %>%
-        select(
+      select(
         county_fips, state_fips, measure_id, 
         raw_value, ci_low, ci_high
       )
   })
   
-
+  
   output$note_latest <- renderUI({
     if (identical(input$year, "Latest")) {
       HTML(sprintf("<em>Showing data from most recent release year: <b>%s</b>.</em>", resolved_year()))
@@ -269,7 +269,7 @@ server <- function(input, output, session) {
     
     df <- year_data()
     req(df)
-   
+    
     
     # filter measure data by fips
     df %>%
@@ -293,12 +293,13 @@ server <- function(input, output, session) {
     #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
 
     
+    
     state_fips <- chosen$statecode[1]
-  req(state_fips)
+    req(state_fips)
     county_fips <- "000"
     
     # construct path to state data CSV for the chosen year
-   # state_file = sprintf("https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv", 2023, 2023)
+    # state_file = sprintf("https://github.com/County-Health-Rankings-and-Roadmaps/chrr_measure_calcs/raw/main/relational_data/%s/t_state_data_%s.csv", 2023, 2023)
     
     state_file <- sprintf(
       "https://github.com/County-Health-Rankings-and-Roadmaps/relational_data/raw/main/t_state_data_%s.csv",
@@ -370,7 +371,7 @@ server <- function(input, output, session) {
     
     # Join county data and map
     measure_values <- county_df() %>%
-     #measure_values = county_df %>% 
+      #measure_values = county_df %>% 
       left_join(state_df(), by = c("measure_id", "state_fips")) %>% 
       left_join(ntl_df(), by = c("measure_id", "state_fips")) %>% 
       left_join(measure_map, by = "measure_id") %>%
@@ -604,7 +605,7 @@ server <- function(input, output, session) {
     })
     
     div(class = "ui segments", category_blocks)
- 
+    
     
     # --- Wrap everything in top-level accordion ---
     top_accordion <- div(class = "ui styled fluid accordion", category_blocks)
