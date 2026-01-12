@@ -178,7 +178,7 @@ ui <- semanticPage(
               
               div(class = "ui segment",
                   uiOutput("note_latest"),
-                  downloadButton("download_data", "Download these data as a csv"),
+                  uiOutput("download_data_ui"),
                   tags$br(), tags$br(), 
                   helpText(HTML("
                     <b>Legend:</b> <br>
@@ -257,21 +257,6 @@ server <- function(input, output, session) {
                 selected = counties_in_state$county[1])
   })
   
-  output$download_data <- downloadHandler(
-    filename = function() {
-      paste0(
-        input$state, "_",
-        input$county, "_",
-        input$year,
-        ".csv"
-      )
-    },
-    content = function(file) {
-      write.csv(measure_values, file, row.names = FALSE)
-    }
-  )
-  
-  
   
   resolved_year <- reactive({
     if (identical(input$year, "Latest")) {
@@ -281,6 +266,42 @@ server <- function(input, output, session) {
       input$year
     }
   })
+  
+  output$download_data_ui <- renderUI({
+    req(input$county, input$year)
+    
+    label <- paste0(
+      "Download data for ",
+      input$county,
+      ", ",
+      input$state, 
+      " from release year: ",
+      resolved_year(),
+      " as a CSV"
+    )
+    
+    downloadButton(
+      outputId = "download_data",
+      label = label
+    )
+  })
+  
+  
+  output$download_data <- downloadHandler(
+    filename = function() {
+      paste0(
+        input$state, "_",
+        input$county, "_",
+        resolved_year(),
+        ".csv"
+      )
+    },
+    content = function(file) {
+      write.csv(measure_values, file, row.names = FALSE)
+    }
+  )
+  
+  
   
   year_data <- reactive({
     y <- resolved_year(); req(y)
@@ -586,7 +607,10 @@ server <- function(input, output, session) {
       )%>%
       gt::tab_options(
         row_group.as_column = FALSE,
-        table.width = gt::pct(100)
+        container.width = gt::pct(100), 
+        table.width = gt::pct(100),
+        data_row.padding = gt::px(6),
+        heading.align = "left"
       )
     
     
