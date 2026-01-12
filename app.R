@@ -125,8 +125,29 @@ get_county_list <- function() {
   return(counties)
 }
 
-county_choices <- get_county_list()
-state_choices <- sort(unique(county_choices$state))
+# add the full state name in 
+state_lookup <- data.frame(
+  state = state.abb,
+  state_name = state.name,
+  stringsAsFactors = FALSE
+)
+#need DC too 
+state_lookup <- rbind(
+  state_lookup,
+  data.frame(
+    state = "DC",
+    state_name = "Washington, D.C.",
+    stringsAsFactors = FALSE
+  )
+)
+
+county_choices <- get_county_list() %>%
+  dplyr::left_join(state_lookup, by = "state")
+
+
+state_choices <- county_choices %>%
+  dplyr::distinct(state, state_name) %>%
+  dplyr::arrange(state_name)
 
 
 
@@ -153,8 +174,10 @@ ui <- semanticPage(
                   selectInput(
                     inputId = "state",
                     label = "Select State:",
-                    choices = state_choices,
-                    selected = state_choices[1]
+                    choices = setNames(
+                      state_choices$state, #this is what input$state is defined as 
+                      state_choices$state_name), # this is waht the user selects  
+                    selected = state_choices$state[1]
                   ),
                   
                   uiOutput("county_ui"),
@@ -268,7 +291,11 @@ server <- function(input, output, session) {
   })
   
   output$download_data_ui <- renderUI({
-    req(input$county, input$year)
+    req(
+      nzchar(input$state),
+      nzchar(input$county),
+      nzchar(input$year)
+    )
     
     label <- paste0(
       "Download data for ",
@@ -288,7 +315,14 @@ server <- function(input, output, session) {
   
   
   output$download_data <- downloadHandler(
+    
     filename = function() {
+      req(
+        nzchar(input$state),
+        nzchar(input$county),
+        nzchar(input$year)
+      )
+      
       paste0(
         input$state, "_",
         input$county, "_",
@@ -297,6 +331,11 @@ server <- function(input, output, session) {
       )
     },
     content = function(file) {
+      req(
+        nzchar(input$state),
+        nzchar(input$county),
+        nzchar(input$year)
+      )
       write.csv(measure_values, file, row.names = FALSE)
     }
   )
