@@ -269,14 +269,14 @@ server <- function(input, output, session) {
       filter(state == input$state)
     
     if (nrow(counties_in_state) == 0) {
-      return(selectInput("county", "Select County:", choices = "Select a state first"))
+      return(selectInput("county", "Select County (OPTIONAL):", choices = "Select a state first"))
     }
     
-    selectInput("county", "Select County:",
+    selectInput("county", "Select County (OPTIONAL):",
                 #choices = setNames(counties_in_state$fipscode, counties_in_state$county),
-                choices = counties_in_state$county, 
+                choices = c("Statewide", counties_in_state$county), 
                 #selected = counties_in_state$fipscode[1])
-                selected = counties_in_state$county[1])
+                selected = "Statewide")
   })
   
   
@@ -295,13 +295,15 @@ server <- function(input, output, session) {
       nzchar(input$county),
       nzchar(input$year)
     )
+    # Use empty string if statewide
+    county_label <- if (input$county == "Statewide") "" else input$county
     
     label <- paste0(
       "Download data for ",
-      input$county,
-      ", ",
+      county_label,
+      if (county_label != "") ", " else "",  # add comma only if county is not empty
       input$state, 
-      " from release year: ",
+      " from release year ",
       resolved_year(),
       " as a CSV"
     )
@@ -322,9 +324,12 @@ server <- function(input, output, session) {
         nzchar(input$year)
       )
       
+      county_label <- if (input$county == "Statewide") "" else input$county
+      
       paste0(
-        input$state, "_",
-        input$county, "_",
+        input$state,
+        if (county_label != "") paste0("_", county_label) else "",
+        "_",
         resolved_year(),
         ".csv"
       )
@@ -364,10 +369,13 @@ server <- function(input, output, session) {
   county_df <- reactive({
     req(input$state, input$county)
     
+    # If statewide, don't create county_df
+    if (input$county == "Statewide") {
+      return(NULL)
+    }
     # find the fips codes for the chosen state + county
     chosen <- county_choices %>%
       filter(state == input$state & county == input$county) #note that the input county is the county name 
-    
     #chosen = county_choices %>% filter(state == "MN" & county == "Olmsted County")
     
     # Defensive check
@@ -390,12 +398,12 @@ server <- function(input, output, session) {
   })
   
   state_df <- reactive({
-    req(input$state, input$county, input$year)
+    req(input$state, input$year)
     y <- resolved_year(); req(y) 
     
     # find the fips codes for the chosen state + county
     chosen <- county_choices %>%
-      filter(state == input$state & county == input$county) #note that the input county is the county name
+      filter(state == input$state)
     # Defensive check
     req(nrow(chosen) > 0)  # ensures chosen is not empty
     
@@ -465,13 +473,9 @@ server <- function(input, output, session) {
   
   
   
-  # Reactive: raw measure values for the selected county/year
   measure_values_data <- reactive({
-    req(input$county, input$year, input$state)
+    req(input$year, input$state)
     y <- resolved_year(); req(y) 
-    
-    # Require data from upstream reactives to be ready
-    req(county_df(), state_df(), ntl_df())
     
     # Build the measure mapping
     measure_map <- mea_names %>%
@@ -481,51 +485,64 @@ server <- function(input, output, session) {
       left_join(cat_names, by = c("factor_parent" = "category_id", "year")) %>%
       select(measure_id, measure_name, years_used, factor_name, category_name, display_precision, format_type, compare_states, compare_years, description)
     
-    # Join county data and map
-    measure_values <- county_df() %>%
-      #measure_values = county_df %>% 
-      #left_join(state_df, by = c("measure_id", "state_fips")) %>% 
-      #left_join(ntl_df, by = "measure_id") %>% 
-      left_join(state_df(), by = c("measure_id", "state_fips")) %>% 
-      left_join(ntl_df(), by = "measure_id") %>% 
-      left_join(measure_map, by = "measure_id") %>%
+    # Start with the correct base data
+    if (input$county == "Statewide") {
+      req(state_df(), ntl_df())
+      measure_values <- state_df() %>%
+        left_join(ntl_df()%>% select(-state_fips), by = "measure_id") %>%
+        left_join(measure_map, by = "measure_id")
+    } else {
+      req(county_df(), state_df(), ntl_df())
+      measure_values <- county_df() %>%
+        left_join(state_df(), by = c("measure_id", "state_fips")) %>%
+        left_join(ntl_df() %>% select(-state_fips), by = "measure_id") %>%
+        left_join(measure_map, by = "measure_id")
+    }
+    
+    # Apply formatting
+    measure_values <- measure_values %>%
       mutate(
-        measure_display = paste0(measure_name, " (", years_used, ")"),
-        value_ci = case_when(
-          # Case: missing CI
-          is.na(ci_low) | is.na(ci_high) ~ as.character(
-            case_when(
-              format_type == 0 ~ scales::number(raw_value, accuracy = 1 / (10^display_precision)), # rate
-              format_type == 1 ~ scales::percent(raw_value, accuracy = 1 / (10^display_precision)), # percentage
-              format_type == 2 ~ scales::dollar(raw_value, accuracy = 1 / (10^display_precision)),  # dollars
-              format_type == 3 ~ scales::number(raw_value, accuracy = 1 / (10^display_precision))   # ratio
-            )
-          ),
-          # Case: with CI
-          TRUE ~ case_when(
-            format_type == 0 ~ paste0(
-              scales::number(raw_value, accuracy = 1 / (10^display_precision)), " (",
-              scales::number(ci_low, accuracy = 1 / (10^display_precision)), ", ",
-              scales::number(ci_high, accuracy = 1 / (10^display_precision)), ")"
+        # County value only if not statewide
+        value_ci = if (input$county != "Statewide") {
+          case_when(
+            is.na(ci_low) | is.na(ci_high) ~ as.character(
+              case_when(
+                format_type == 0 ~ scales::number(raw_value, accuracy = 1 / (10^display_precision)),
+                format_type == 1 ~ scales::percent(raw_value, accuracy = 1 / (10^display_precision)),
+                format_type == 2 ~ scales::dollar(raw_value, accuracy = 1 / (10^display_precision)),
+                format_type == 3 ~ scales::number(raw_value, accuracy = 1 / (10^display_precision))
+              )
             ),
-            format_type == 1 ~ paste0(
-              scales::percent(raw_value, accuracy = 1 / (10^display_precision)), " (",
-              scales::percent(ci_low, accuracy = 1 / (10^display_precision)), ", ",
-              scales::percent(ci_high, accuracy = 1 / (10^display_precision)), ")"
-            ),
-            format_type == 2 ~ paste0(
-              scales::dollar(raw_value, accuracy = 1 / (10^display_precision)), " (",
-              scales::dollar(ci_low, accuracy = 1 / (10^display_precision)), ", ",
-              scales::dollar(ci_high, accuracy = 1 / (10^display_precision)), ")"
-            ),
-            format_type == 3 ~ paste0(
-              scales::number(raw_value, accuracy = 1 / (10^display_precision)), " (",
-              scales::number(ci_low, accuracy = 1 / (10^display_precision)), ", ",
-              scales::number(ci_high, accuracy = 1 / (10^display_precision)), ")"
+            TRUE ~ case_when(
+              format_type == 0 ~ paste0(
+                scales::number(raw_value, accuracy = 1 / (10^display_precision)), " (",
+                scales::number(ci_low, accuracy = 1 / (10^display_precision)), ", ",
+                scales::number(ci_high, accuracy = 1 / (10^display_precision)), ")"
+              ),
+              format_type == 1 ~ paste0(
+                scales::percent(raw_value, accuracy = 1 / (10^display_precision)), " (",
+                scales::percent(ci_low, accuracy = 1 / (10^display_precision)), ", ",
+                scales::percent(ci_high, accuracy = 1 / (10^display_precision)), ")"
+              ),
+              format_type == 2 ~ paste0(
+                scales::dollar(raw_value, accuracy = 1 / (10^display_precision)), " (",
+                scales::dollar(ci_low, accuracy = 1 / (10^display_precision)), ", ",
+                scales::dollar(ci_high, accuracy = 1 / (10^display_precision)), ")"
+              ),
+              format_type == 3 ~ paste0(
+                scales::number(raw_value, accuracy = 1 / (10^display_precision)), " (",
+                scales::number(ci_low, accuracy = 1 / (10^display_precision)), ", ",
+                scales::number(ci_high, accuracy = 1 / (10^display_precision)), ")"
+              )
             )
           )
-        ),
-        # State value + CI
+        } else {
+          NULL  # No county values if statewide
+        },
+        
+        # The rest of the formatting applies to all selections
+        measure_display = paste0(measure_name, " (", years_used, ")"),
+        
         stateval_fmt = case_when(
           is.na(state_ci_low) | is.na(state_ci_high) ~ as.character(
             case_when(
@@ -559,7 +576,6 @@ server <- function(input, output, session) {
           )
         ),
         
-        # State value + CI
         ntlval_fmt = case_when(
           is.na(ntl_ci_low) | is.na(ntl_ci_high) ~ as.character(
             case_when(
@@ -592,8 +608,7 @@ server <- function(input, output, session) {
             )
           )
         ),
-        # Text used in legend for year-to-year comparability
-        # where -1 = unknown, 0 = no, 1 = yes, and 2= with caution 
+        
         compare_years_text = case_when(
           compare_years == -1 ~ "Comparability across years is unknown",
           compare_years ==  0 ~ "Not comparable across years",
@@ -602,13 +617,8 @@ server <- function(input, output, session) {
           TRUE ~ ""
         ),
         
-        # Years used + legend text
-        years_used_display = paste0(
-          years_used, ": ", compare_years_text
-        ),
+        years_used_display = paste0(years_used, ": ", compare_years_text),
         
-        # where -1 = unknown, 0 = no, 1 = yes, and 2= with caution 
-        # Replace compare_states with a symbol (kept compact)
         compare_states_sym = case_when(
           compare_states == -1 ~ "❓",
           compare_states ==  0 ~ "❌",
@@ -617,30 +627,34 @@ server <- function(input, output, session) {
           TRUE ~ ""
         ),
         
-        # Measure name + description
-        measure_label = paste0("**", measure_name, "**: ",
-          description, "<br>",
-          compare_states_sym) 
-        
-) %>% 
-      select(
-        -compare_years,
-        -compare_states,
-        -years_used,
-        -measure_name,
-        -description
+        measure_label = paste0("**", measure_name, "**: ", description, "<br>", compare_states_sym)
       )
     
     measure_values
   })
   
+download_data = reactive({
+    
+  measure_values_data() %>%  
+      select(state_fips, any_of("county_fips"), 
+        measure_id, measure_name, description,
+        factor_name,	category_name,
+        years_used, compare_years_text,
+        any_of("raw_value"), any_of("ci_low"), any_of("ci_high"), 
+        state_fips,	stateval,	state_ci_low,	state_ci_high,
+        ntlval,	ntl_ci_low,	ntl_ci_high,
+        
+      )
+  })
   
   snapshot_table <- reactive({
     req(measure_values_data())
     
     final_table <- measure_values_data() %>%
       #final_table = measure_values %>% 
-        select(measure_label, years_used_display, value_ci, stateval_fmt, ntlval_fmt, factor_name, category_name)
+        select(measure_label, years_used_display, 
+               any_of("value_ci"), 
+               stateval_fmt, ntlval_fmt, factor_name, category_name)
      
     # Create a modified category for Demographics
     final_table %>% 
@@ -668,21 +682,33 @@ output$category_tables_ui <- renderUI({
       mutate(row_group = factor_name) %>%
       select(-category_name, -category_name_mod, -factor_name)
     
-    tbl <- gt(cat_df,
-              #rowname_col = "measure_display_fmt",
-              groupname_col = "row_group") %>%
+    tbl <- gt(cat_df, groupname_col = "row_group") %>%
       tab_style(
         style = cell_text(weight = "bold"),
         locations = cells_row_groups()
-      ) %>%
-      cols_label(
-        value_ci = paste0(input$county, " (95% CI)"),
-        stateval_fmt = paste0(input$state, " (95% CI)"),
-        ntlval_fmt = "United States",
-        measure_label = "",
-        years_used_display = ""
-        #state_comparison_note = ""
-      ) %>%
+      )
+    
+    # Conditionally add value_ci
+    if ("value_ci" %in% colnames(cat_df)) {
+      tbl <- tbl %>%
+        cols_label(
+          value_ci = paste0(input$county, " (95% CI)"),
+          stateval_fmt = paste0(input$state, " (95% CI)"),
+          ntlval_fmt = "United States",
+          measure_label = "",
+          years_used_display = ""
+        )
+    } else {
+      tbl <- tbl %>%
+        cols_label(
+          stateval_fmt = paste0(input$state, " (95% CI)"),
+          ntlval_fmt = "United States",
+          measure_label = "",
+          years_used_display = ""
+        )
+    }
+    
+    tbl <- tbl %>%
       fmt_markdown(columns = measure_label) %>% 
       tab_options(
         row_group.as_column = FALSE,
@@ -692,6 +718,9 @@ output$category_tables_ui <- renderUI({
         heading.align = "left"
       ) %>%
       tab_header(title = cat_name)
+    
+    
+    
     
     # Convert gt to HTML and wrap in scrollable div
     div(style = "overflow-x:auto; margin-bottom:20px;",
@@ -722,7 +751,7 @@ output$category_tables_ui <- renderUI({
       )
     },
     content = function(file) {
-      write.csv(measure_values_data(), file, row.names = FALSE)
+      write.csv(download_data(), file, row.names = FALSE)
     }
   )
   }
