@@ -205,10 +205,9 @@ ui <- semanticPage(
                   tags$br(), tags$br(), 
                   helpText(HTML("
                     <b>Legend:</b> <br>
-                    ✓ Comparable with prior years<br>
-                    ✗ Not comparable with prior years<br>
-                    ⚠ Use caution when comparing with prior years
-                  ")),
+                    ✅ These data can be compared across states<br>
+                    ❌ These data are incomparable across states<br>
+                    ⚠️ Use caution if comparing these data across states")),
                   
                   # no accordion, just separate gts for each cat  
                   uiOutput("category_tables_ui")
@@ -592,8 +591,46 @@ server <- function(input, output, session) {
               scales::number(ntl_ci_high, accuracy = 1 / (10^display_precision)), ")"
             )
           )
-        )
+        ),
+        # Text used in legend for year-to-year comparability
+        # where -1 = unknown, 0 = no, 1 = yes, and 2= with caution 
+        compare_years_text = case_when(
+          compare_years == -1 ~ "Comparability across years is unknown",
+          compare_years ==  0 ~ "Not comparable across years",
+          compare_years ==  1 ~ "Comparable across years",
+          compare_years == 2 ~ "Use caution when comparing across years", 
+          TRUE ~ ""
+        ),
+        
+        # Years used + legend text
+        years_used_display = paste0(
+          years_used, ": ", compare_years_text
+        ),
+        
+        # where -1 = unknown, 0 = no, 1 = yes, and 2= with caution 
+        # Replace compare_states with a symbol (kept compact)
+        compare_states_sym = case_when(
+          compare_states == -1 ~ "❓",
+          compare_states ==  0 ~ "❌",
+          compare_states ==  1 ~ "✅",
+          compare_states == 2 ~ "⚠️",
+          TRUE ~ ""
+        ),
+        
+        # Measure name + description
+        measure_label = paste0("**", measure_name, "**: ",
+          description, "<br>",
+          compare_states_sym) 
+        
+) %>% 
+      select(
+        -compare_years,
+        -compare_states,
+        -years_used,
+        -measure_name,
+        -description
       )
+    
     measure_values
   })
   
@@ -603,44 +640,14 @@ server <- function(input, output, session) {
     
     final_table <- measure_values_data() %>%
       #final_table = measure_values %>% 
-      mutate(
-        measure_display_fmt = paste0(
-          measure_display, " ",
-          case_when(
-            compare_years == -1 ~ "?",
-            compare_years == 0  ~ "✗",
-            compare_years == 1  ~ "✓",
-            compare_years == 2  ~ "⚠",
-            TRUE ~ ""
-          )
-        ),
-        state_comparison_note = case_when(
-          compare_states == -1 ~ "Use caution if comparing these data across states",
-          compare_states == 0  ~ "These data are incomparable across states",
-          compare_states == 1  ~ "These data can be compared across states",
-          compare_states == 2  ~ "Use caution if comparing these data across states",
-          TRUE ~ ""
-        )
-      ) %>%
-      select(
-        category_name,
-        factor_name,
-        measure_display_fmt,
-        description,
-        state_comparison_note,
-        value_ci,
-        stateval_fmt,
-        ntlval_fmt
-      ) %>%
-      arrange(category_name, factor_name)
-    
+        select(measure_label, years_used_display, value_ci, stateval_fmt, ntlval_fmt, factor_name, category_name)
+     
     # Create a modified category for Demographics
     final_table %>% 
-      mutate(
-        category_name_mod = ifelse(factor_name == "Demographics",
-                                   "Demographics Category",  # artificial category
-                                   category_name)
-      )
+      mutate(category_name_mod = 
+               ifelse(factor_name == "Demographics",
+                                   "Demographics",  # artificial category
+                                   category_name))
   })
   
 
@@ -662,7 +669,7 @@ output$category_tables_ui <- renderUI({
       select(-category_name, -category_name_mod, -factor_name)
     
     tbl <- gt(cat_df,
-              rowname_col = "measure_display_fmt",
+              #rowname_col = "measure_display_fmt",
               groupname_col = "row_group") %>%
       tab_style(
         style = cell_text(weight = "bold"),
@@ -672,9 +679,11 @@ output$category_tables_ui <- renderUI({
         value_ci = paste0(input$county, " (95% CI)"),
         stateval_fmt = paste0(input$state, " (95% CI)"),
         ntlval_fmt = "United States",
-        description = "",
-        state_comparison_note = ""
+        measure_label = "",
+        years_used_display = ""
+        #state_comparison_note = ""
       ) %>%
+      fmt_markdown(columns = measure_label) %>% 
       tab_options(
         row_group.as_column = FALSE,
         container.width = pct(100),
@@ -682,7 +691,7 @@ output$category_tables_ui <- renderUI({
         data_row.padding = px(6),
         heading.align = "left"
       ) %>%
-      tab_header(title = paste0("Category: ", cat_name))
+      tab_header(title = cat_name)
     
     # Convert gt to HTML and wrap in scrollable div
     div(style = "overflow-x:auto; margin-bottom:20px;",
