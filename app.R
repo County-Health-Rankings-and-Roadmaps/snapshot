@@ -155,6 +155,20 @@ state_choices <- county_choices %>%
 # ---- UI ----
 ui <- semanticPage(
   title = "County Snapshot",
+  div(
+    class = "ui warning message",
+    div(
+      class = "content",
+      div(class = "header", "Draft application"),
+      HTML(
+        paste0(
+          "This tool is under development. For official county-level data, please visit the ",
+          "<a href='https://www.countyhealthrankings.org/health-data' target='_blank'>",
+          "County Health Rankings &amp; Roadmaps website</a>, ",
+          "which will remain available through <b>December 2026</b>."
+        )
+      )
+    )),
   
   div(class = "ui container",
       
@@ -179,8 +193,9 @@ ui <- semanticPage(
                       state_choices$state_name), # this is waht the user selects  
                     selected = state_choices$state[1]
                   ),
-                  
+                  br(), 
                   uiOutput("county_ui"),
+                  br(), 
                   uiOutput("year_ui"),
                   
                   tags$hr(),
@@ -200,7 +215,7 @@ ui <- semanticPage(
           div(class = "twelve wide column",
               
               div(class = "ui segment",
-                  uiOutput("note_latest"),
+                  uiOutput("location_header_ui"),
                   uiOutput("download_data_ui"),
                   tags$br(), tags$br(), 
                   helpText(HTML("
@@ -269,10 +284,10 @@ server <- function(input, output, session) {
       filter(state == input$state)
     
     if (nrow(counties_in_state) == 0) {
-      return(selectInput("county", "Select County (OPTIONAL):", choices = "Select a state first"))
+      return(selectInput("county", "Select County (optional: default is statewide):", choices = "Select a state first"))
     }
     
-    selectInput("county", "Select County (OPTIONAL):",
+    selectInput("county", "Select County (optional; default is statewide):",
                 #choices = setNames(counties_in_state$fipscode, counties_in_state$county),
                 choices = c("Statewide", counties_in_state$county), 
                 #selected = counties_in_state$fipscode[1])
@@ -360,11 +375,47 @@ server <- function(input, output, session) {
   })
   
   
-  output$note_latest <- renderUI({
-    if (identical(input$year, "Latest")) {
-      HTML(sprintf("<em>Showing data from most recent release year: <b>%s</b>.</em>", resolved_year()))
+  output$location_header_ui <- renderUI({
+    
+    # Resolve year
+    year_text <- if (identical(input$year, "Latest")) {
+      resolved_year()
+    } else {
+      input$year
     }
+    
+    # Safely handle county input
+    county_label <- if (
+      is.null(input$county) || input$county == "Statewide"
+    ) {
+      ""
+    } else {
+      input$county
+    }
+    
+    # Lookup full state name
+    state_label <- state_lookup[state_lookup$state == input$state,]$state_name
+    
+    # Fallback (just in case)
+    if (is.null(state_label)) {
+      state_label <- input$state
+    }
+    
+    # Build location text
+    location_text <- if (nzchar(county_label)) {
+      paste0(county_label, " County, ", state_label)
+    } else {
+      state_label
+    }
+    
+    
+    h3(
+      class = "ui header",
+      paste(location_text, " ", year_text)
+    )
   })
+  
+  
   
   county_df <- reactive({
     req(input$state, input$county)
