@@ -184,7 +184,11 @@ ui <- semanticPage(
           "For official county-level data, please visit the ",
           "<a href='https://www.countyhealthrankings.org/health-data' target='_blank'>",
           "County Health Rankings &amp; Roadmaps website</a>",
-          " which will remain available through December 2026."
+          " which will remain available through December 2026.<br><br>",
+          "We appreciate your help troubleshooting this app. ", 
+          "If you encounter any bugs, please ", 
+          "<a href='https://github.com/County-Health-Rankings-and-Roadmaps/snapshot/issues'target='blank'>",
+          "open an issue on the app's GitHub repo</a>. You can also view planned changes and improvements there. Thank you!"
         )
       )
     )),
