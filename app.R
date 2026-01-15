@@ -186,9 +186,9 @@ ui <- semanticPage(
           "County Health Rankings &amp; Roadmaps website</a>",
           " which will remain available through December 2026.<br><br>",
           "We appreciate your help troubleshooting this tool. ", 
-          "If you encounter any bugs, please ", 
+          "If you encounter any bugs or have an idea for an improvement, please ", 
           "<a href='https://github.com/County-Health-Rankings-and-Roadmaps/snapshot/issues'target='blank'>",
-          "open an issue on the app's GitHub repo</a>. You can also view planned changes and improvements there. Thank you!"
+          "open an issue on the app's GitHub repo</a>. You can also view planned changes and known bugs there. Thank you!"
         )
       )
     )),
