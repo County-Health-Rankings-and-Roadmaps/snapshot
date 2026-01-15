@@ -185,7 +185,7 @@ ui <- semanticPage(
           "<a href='https://www.countyhealthrankings.org/health-data' target='_blank'>",
           "County Health Rankings &amp; Roadmaps website</a>",
           " which will remain available through December 2026.<br><br>",
-          "We appreciate your help troubleshooting this app. ", 
+          "We appreciate your help troubleshooting this tool. ", 
           "If you encounter any bugs, please ", 
           "<a href='https://github.com/County-Health-Rankings-and-Roadmaps/snapshot/issues'target='blank'>",
           "open an issue on the app's GitHub repo</a>. You can also view planned changes and improvements there. Thank you!"
@@ -780,70 +780,76 @@ download_data = reactive({
 
      
     
-# Render all tables as HTML inside one UI output
-output$category_tables_ui <- renderUI({
-  req(input$state, input$county, input$year)
-  
-  final_table_mod <- snapshot_table()
-  category_list <- split(final_table_mod, final_table_mod$category_name_mod)
-  
-  # Build HTML for each table
-  tables_html <- map(category_list, function(cat_df) {
-    cat_name <- unique(cat_df$category_name_mod)
+  output$category_tables_ui <- renderUI({
+    req(input$state, input$county, input$year)
     
-    cat_df <- cat_df %>%
-      mutate(row_group = factor_name) %>%
-      select(-category_name, -category_name_mod, -factor_name)
+    final_table_mod <- snapshot_table()
+    category_list <- split(final_table_mod, final_table_mod$category_name_mod)
     
-    tbl <- gt(cat_df, groupname_col = "row_group") %>%
-      tab_style(
-        style = cell_text(weight = "bold"),
-        locations = cells_row_groups()
+    # Build HTML for each category with collapsible <details>
+    tables_html <- map(category_list, function(cat_df) {
+      cat_name <- unique(cat_df$category_name_mod)
+      
+      # Prepare table
+      cat_df <- cat_df %>%
+        mutate(row_group = factor_name) %>%
+        select(-category_name, -category_name_mod, -factor_name)
+      
+      tbl <- gt(cat_df, groupname_col = "row_group") %>%
+        tab_style(
+          style = cell_text(weight = "bold"),
+          locations = cells_row_groups()
+        )
+      
+      # Conditionally add value_ci
+      if ("value_ci" %in% colnames(cat_df)) {
+        tbl <- tbl %>%
+          cols_label(
+            value_ci     = paste0(input$county, " (95% CI)"),
+            stateval_fmt = paste0(state_full(), " (95% CI)"),
+            ntlval_fmt   = "United States",
+            measure_label = "",
+            years_used_display = ""
+          )
+      } else {
+        tbl <- tbl %>%
+          cols_label(
+            stateval_fmt = paste0(state_full(), " (95% CI)"),
+            ntlval_fmt   = "United States",
+            measure_label = "",
+            years_used_display = ""
+          )
+      }
+      
+      tbl <- tbl %>%
+        fmt_markdown(columns = measure_label) %>%
+        tab_options(
+          row_group.as_column = FALSE,
+          container.width = pct(100),
+          table.width = pct(100),
+          data_row.padding = px(6),
+          heading.align = "left"
+        ) %>%
+        tab_header(title = cat_name)
+      
+      # Wrap each gt table in a collapsible <details> block
+      div(
+        HTML(
+          paste0(
+            "<details style='margin-bottom:15px;'>",
+            "<summary style='font-weight:bold; cursor:pointer;'>", cat_name, "</summary>",
+            "<div style='overflow-x:auto; margin-top:5px;'>",
+            as_raw_html(tbl),
+            "</div>",
+            "</details>"
+          )
+        )
       )
+    })
     
-    # Conditionally add value_ci
-    if ("value_ci" %in% colnames(cat_df)) {
-      tbl <- tbl %>%
-        cols_label(
-          value_ci = paste0(input$county, " (95% CI)"),
-          stateval_fmt = paste0(state_full(), " (95% CI)"),
-          ntlval_fmt = "United States",
-          measure_label = "",
-          years_used_display = ""
-        )
-    } else {
-      tbl <- tbl %>%
-        cols_label(
-          stateval_fmt = paste0(state_full(), " (95% CI)"),
-          ntlval_fmt = "United States",
-          measure_label = "",
-          years_used_display = ""
-        )
-    }
-    
-    tbl <- tbl %>%
-      fmt_markdown(columns = measure_label) %>% 
-      tab_options(
-        row_group.as_column = FALSE,
-        container.width = pct(100),
-        table.width = pct(100),
-        data_row.padding = px(6),
-        heading.align = "left"
-      ) %>%
-      tab_header(title = cat_name)
-    
-    
-    
-    
-    # Convert gt to HTML and wrap in scrollable div
-    div(style = "overflow-x:auto; margin-bottom:20px;",
-        HTML(as_raw_html(tbl))
-    )
+    # Combine all collapsible tables into one UI output
+    do.call(tagList, tables_html)
   })
-  
-  do.call(tagList, tables_html)
-})
-    
   
 
   #output$snapshot_semantic <- gt::render_gt({
