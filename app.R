@@ -197,6 +197,16 @@ ui <- semanticPage(
       
       
       h2(class = "ui header", "County Snapshot"),
+      uiOutput("location_header_ui"),
+      helpText(
+        "Data loaded from:",
+        a(
+          sprintf("%s/%s@%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH),
+          href = sprintf("https://github.com/%s/%s/tree/%s",
+                         GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH)
+          #, target = "_blank"
+        )
+      ),
       
       div(class = "ui divider"),
       
@@ -220,17 +230,14 @@ ui <- semanticPage(
                   uiOutput("county_ui"),
                   br(), 
                   uiOutput("year_ui"),
+                  br(),
+                  br(),
+                  helpText(HTML("
+                    <b>Legend:</b> <br>
+                    ✅ These data can be compared across states<br>
+                    ❌ These data are incomparable across states<br>
+                    ⚠️ Use caution if comparing these data across states")),
                   
-                  tags$hr(),
-                  helpText(
-                    "Data loaded from:",
-                    a(
-                      sprintf("%s/%s@%s", GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH),
-                      href = sprintf("https://github.com/%s/%s/tree/%s",
-                                     GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH)
-                      #, target = "_blank"
-                    )
-                  )
               )
           ),
           
@@ -238,16 +245,10 @@ ui <- semanticPage(
           div(class = "twelve wide column",
               
               div(class = "ui segment",
-                  uiOutput("location_header_ui"),
                   uiOutput("download_data_ui"),
                   uiOutput("download_all_counties_ui"),
-                  tags$br(), tags$br(), 
-                  helpText(HTML("
-                    <b>Legend:</b> <br>
-                    ✅ These data can be compared across states<br>
-                    ❌ These data are incomparable across states<br>
-                    ⚠️ Use caution if comparing these data across states")),
-                  
+                  br(),
+                  br(), 
                   # no accordion, just separate gts for each cat  
                   uiOutput("category_tables_ui")
               )
@@ -809,6 +810,15 @@ download_data = reactive({
         if (county_label != "") county_label else state_full(),
       " ", cat_name # category name last
       )
+      # Category-specific paragraph
+      cat_para <- switch(as.character(cat_name),
+                         "Demographics" = "", 
+                         "Population Health and Well-being" = "Population health and well-being is something we create as a society, not something an individual can attain in a clinic or be responsible for alone. Health is more than being free from disease and pain; health is the ability to thrive. Well-being covers both quality of life and the ability of people and communities to contribute to the world. Population health involves optimal physical, mental, spiritual and social well-being.",
+                         "Community Conditions" = "Community conditions include the social and economic factors, physical environment and health infrastructure in which people are born, live, learn, work, play, worship and age. Community conditions are also referred to as the social determinants of health.",
+                         "Health Outcomes" = "Health Outcomes tell us how long people live on average within a community, and how much physical and mental health people experience in a community while they are alive.",
+                         "Health Factors" = "Health Factors describe the upstream drivers that influence a community’s health, including social and economic conditions, access to healthcare, and the physical environment. They help us understand what contributes to health and well-being before outcomes occur.",
+                         "" # default blank
+      )
       
       tbl <- gt(cat_df, groupname_col = "row_group") %>%
         tab_style(
@@ -855,7 +865,14 @@ download_data = reactive({
                          border-radius:5px; cursor:pointer;'>",
             cat_name, 
             "</summary>",
-            "<div style='overflow-x:auto; margin-top:5px;'>",
+            
+            # Paragraph at top of table
+            "<div style='font-size:16px; line-height:1.5; margin:15px 0; padding:5px;'>",
+            cat_para,
+            "</div>",
+            
+            # Table itself
+            "<div style='overflow-x:auto; margin-top:10px;'>",
             as_raw_html(tbl),
             "</div>",
             "</details>"
