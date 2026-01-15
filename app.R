@@ -54,6 +54,25 @@ read_csv_github <- function(path) {
   readr::read_csv(url, show_col_types = FALSE, progress = FALSE)
 }
 
+# helper to download data for all counties 
+get_github_file_for_year <- function(pattern, year) {
+  
+  api_url <- paste0(
+    "https://api.github.com/repos/",
+    "County-Health-Rankings-and-Roadmaps/",
+    "relational_data/contents/downloadable"
+  )
+  
+  resp <- jsonlite::fromJSON(api_url)
+  
+  resp %>%
+    dplyr::filter(
+      type == "file",
+      grepl(pattern, name, ignore.case = TRUE),
+      grepl(as.character(year), name)
+    )
+}
+
 
 
 # load the names datasets that are not year, county, or measure specific (ie these are always loaded) 
@@ -159,13 +178,13 @@ ui <- semanticPage(
     class = "ui warning message",
     div(
       class = "content",
-      div(class = "header", "Draft application"),
+      div(class = "header", "This tool is under development"),
       HTML(
         paste0(
-          "This tool is under development. For official county-level data, please visit the ",
+          "For official county-level data, please visit the ",
           "<a href='https://www.countyhealthrankings.org/health-data' target='_blank'>",
-          "County Health Rankings &amp; Roadmaps website</a>, ",
-          "which will remain available through <b>December 2026</b>."
+          "County Health Rankings &amp; Roadmaps website</a>",
+          " which will remain available through December 2026."
         )
       )
     )),
@@ -217,6 +236,7 @@ ui <- semanticPage(
               div(class = "ui segment",
                   uiOutput("location_header_ui"),
                   uiOutput("download_data_ui"),
+                  uiOutput("download_all_counties_ui"),
                   tags$br(), tags$br(), 
                   helpText(HTML("
                     <b>Legend:</b> <br>
@@ -250,6 +270,16 @@ server <- function(input, output, session) {
   #})
   # provide default years immediately, update later with GitHub API
   available_years <- reactiveVal(c("2023", "2022"))
+  
+  
+  # reactive to get full state name
+  state_full <- reactive({
+    req(input$state)
+    full_name <- state_lookup[state_lookup$state == input$state, ]$state_name
+    if (length(full_name) == 0) full_name <- input$state
+    full_name
+  })
+  
   
   observe({
     yrs <- tryCatch(list_year_dirs(), error = function(e) character())
@@ -316,11 +346,10 @@ server <- function(input, output, session) {
     label <- paste0(
       "Download data for ",
       county_label,
-      if (county_label != "") ", " else "",  # add comma only if county is not empty
-      input$state, 
-      " from release year ",
+      if (county_label != "") paste0(", ", input$state) else state_full(),   # add comma only if county is not empty
+      " (",
       resolved_year(),
-      " as a CSV"
+      " )"
     )
     
     downloadButton(
@@ -328,6 +357,18 @@ server <- function(input, output, session) {
       label = label
     )
   })
+  
+  output$download_all_counties_ui <- renderUI({
+    req(nzchar(input$year))
+    
+   
+      downloadButton(
+        "download_analytic_all_counties",
+        paste0("Download analytic data for all counties (", resolved_year(), ")")
+      
+    )
+  })
+  
   
   
   output$download_data <- downloadHandler(
@@ -359,7 +400,31 @@ server <- function(input, output, session) {
     }
   )
   
-  
+  output$download_analytic_all_counties <- downloadHandler(
+    
+    filename = function() {
+      req(nzchar(input$year))
+      paste0("analytic_all_counties_", resolved_year(), ".csv")
+    },
+    
+    content = function(file) {
+      req(nzchar(input$year))
+      
+      year <- resolved_year()
+      
+      f <- get_github_file_for_year(
+        pattern = "analytic",
+        year = year
+      )
+      
+      download.file(
+        url = f$download_url,
+        destfile = file,
+        mode = "wb"
+      )
+    }
+  )
+
   
   year_data <- reactive({
     y <- resolved_year(); req(y)
@@ -393,19 +458,12 @@ server <- function(input, output, session) {
       input$county
     }
     
-    # Lookup full state name
-    state_label <- state_lookup[state_lookup$state == input$state,]$state_name
-    
-    # Fallback (just in case)
-    if (is.null(state_label)) {
-      state_label <- input$state
-    }
     
     # Build location text
     location_text <- if (nzchar(county_label)) {
-      paste0(county_label, " County, ", state_label)
+      paste0(county_label, " County, ", state_full())
     } else {
-      state_label
+      state_full()
     }
     
     
@@ -744,7 +802,7 @@ output$category_tables_ui <- renderUI({
       tbl <- tbl %>%
         cols_label(
           value_ci = paste0(input$county, " (95% CI)"),
-          stateval_fmt = paste0(input$state, " (95% CI)"),
+          stateval_fmt = paste0(state_full(), " (95% CI)"),
           ntlval_fmt = "United States",
           measure_label = "",
           years_used_display = ""
@@ -752,7 +810,7 @@ output$category_tables_ui <- renderUI({
     } else {
       tbl <- tbl %>%
         cols_label(
-          stateval_fmt = paste0(input$state, " (95% CI)"),
+          stateval_fmt = paste0(state_full(), " (95% CI)"),
           ntlval_fmt = "United States",
           measure_label = "",
           years_used_display = ""
