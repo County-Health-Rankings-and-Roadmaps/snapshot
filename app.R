@@ -768,13 +768,22 @@ download_data = reactive({
         select(measure_label, years_used_display, 
                any_of("value_ci"), 
                stateval_fmt, ntlval_fmt, factor_name, category_name)
+    
      
-    # Create a modified category for Demographics
+    # Force the display order based on year
+    if (resolved_year() < 2025) {
+      level_order <- c("Demographics", "Health Outcomes", "Health Factors")
+    } else {
+      level_order <- c("Demographics", "Population Health and Well-being", "Community Conditions")
+    }
+    
     final_table %>% 
-      mutate(category_name_mod = 
-               ifelse(factor_name == "Demographics",
-                                   "Demographics",  # artificial category
-                                   category_name))
+      mutate(category_name_mod = factor(
+        ifelse(factor_name == "Demographics", "Demographics", category_name),
+        levels = level_order
+      )) %>%
+      filter(!is.na(category_name_mod))
+    
   })
   
 
@@ -782,18 +791,24 @@ download_data = reactive({
     
   output$category_tables_ui <- renderUI({
     req(input$state, input$county, input$year)
-    
-    final_table_mod <- snapshot_table()
+    final_table_mod = snapshot_table() 
     category_list <- split(final_table_mod, final_table_mod$category_name_mod)
     
-    # Build HTML for each category with collapsible <details>
+ 
+    # Build HTML for each category with styled collapsible <details>
     tables_html <- map(category_list, function(cat_df) {
       cat_name <- unique(cat_df$category_name_mod)
       
-      # Prepare table
       cat_df <- cat_df %>%
         mutate(row_group = factor_name) %>%
         select(-category_name, -category_name_mod, -factor_name)
+      
+      # Build the label to include county/state/year
+      county_label <- if (input$county == "Statewide") "" else input$county
+      table_label <- paste0(
+        if (county_label != "") county_label else state_full(),
+      " ", cat_name # category name last
+      )
       
       tbl <- gt(cat_df, groupname_col = "row_group") %>%
         tab_style(
@@ -801,7 +816,6 @@ download_data = reactive({
           locations = cells_row_groups()
         )
       
-      # Conditionally add value_ci
       if ("value_ci" %in% colnames(cat_df)) {
         tbl <- tbl %>%
           cols_label(
@@ -830,14 +844,17 @@ download_data = reactive({
           data_row.padding = px(6),
           heading.align = "left"
         ) %>%
-        tab_header(title = cat_name)
+        tab_header(title = table_label)
       
-      # Wrap each gt table in a collapsible <details> block
       div(
         HTML(
           paste0(
             "<details style='margin-bottom:15px;'>",
-            "<summary style='font-weight:bold; cursor:pointer;'>", cat_name, "</summary>",
+            "<summary style='font-size:20px; font-weight:bold; padding:10px 15px; 
+                         background-color:#f2f2f2; border:1px solid #ccc; 
+                         border-radius:5px; cursor:pointer;'>",
+            cat_name, 
+            "</summary>",
             "<div style='overflow-x:auto; margin-top:5px;'>",
             as_raw_html(tbl),
             "</div>",
@@ -846,6 +863,7 @@ download_data = reactive({
         )
       )
     })
+    
     
     # Combine all collapsible tables into one UI output
     do.call(tagList, tables_html)
